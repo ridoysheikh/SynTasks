@@ -6,7 +6,7 @@ Copyright (c) 2022-2024 Pavel Kirilin
 SynTasks is derived from taskiq (https://github.com/taskiq-python/taskiq),
 originally created by Pavel Kirilin and the taskiq contributors and released
 under the MIT License. Portions of this software are copied from or based on
-taskiq. The module syntasks/dependencies is vendored from taskiq-dependencies
+taskiq. The module syntasks.dependencies is vendored from taskiq-dependencies
 (https://github.com/taskiq-python/taskiq-dependencies), Copyright (c) 2024
 Pavel Kirilin, MIT License. The original copyright notices above are retained
 as required.

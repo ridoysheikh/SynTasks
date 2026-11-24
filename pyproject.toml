@@ -4,7 +4,7 @@ description = "Distributed async task queue for Python with built-in Redis suppo
 readme = "README.md"
 requires-python = ">=3.11,<4"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Synlor" }]
 maintainers = [{ name = "Synlor" }]
 keywords = ["async", "distributed", "queue", "redis", "syntasks", "tasks"]
@@ -92,21 +92,23 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling", "versioningit"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.coverage.run]
 omit = [
-  "syntasks/__main__.py",
-  "syntasks/abc/cmd.py"
+  "src/syntasks/__main__.py",
+  "src/syntasks/abc/cmd.py"
 ]
 
 [tool.hatch.version]
-source = "versioningit"
+path = "src/syntasks/__init__.py"
 
-[tool.versioningit]
-# Used when building outside a git checkout (no tags available).
-default-version = "0.1.0.dev0"
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "docs", "examples", "README.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/syntasks"]
 
 [tool.black]
 target-version = ["py311"]
@@ -126,10 +128,12 @@ warn_unused_ignores = false
 [tool.pytest]
 log_level = "INFO"
 anyio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.ruff]
 target-version = "py311"
 exclude = [".venv/"]
+src = ["src", "."]
 line-length = 88
 # List of enabled rulsets.
 # See https://docs.astral.sh/ruff/rules/ for more information.
@@ -178,7 +182,7 @@ lint.ignore = [
 lint.mccabe = { max-complexity = 10 }
 
 [tool.ruff.lint.per-file-ignores]
-"syntasks/dependencies/*" = [
+"src/syntasks/dependencies/*" = [
   # Vendored from taskiq-dependencies; kept close to upstream.
   "C901",  # Function is too complex
   "N802",  # `Depends` keeps its public name
@@ -186,17 +190,17 @@ lint.mccabe = { max-complexity = 10 }
   "PLR0915",  # Too many statements
   "PYI034",  # __enter__ return type
 ]
-"syntasks/cli/*" = [
+"src/syntasks/cli/*" = [
   "T201",  # CLI commands print
   "C901",  # One branch per sub-command
   "PLR0912",
   "PLR0915",
 ]
-"syntasks/**/scripts.py" = [
+"src/syntasks/**/scripts.py" = [
   "E501",  # Lua source
   "UP031",
 ]
-"syntasks/cluster/semaphore.py" = ["UP031"]  # Lua source with % substitution
+"src/syntasks/cluster/semaphore.py" = ["UP031"]  # Lua source with % substitution
 "tests/**/*" = [
   "S101",  # Use of assert detected
   "S105",  # Hardcoded password (test credentials)
