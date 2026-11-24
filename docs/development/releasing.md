@@ -25,7 +25,7 @@ Releases are built **on a maintainer's machine** and published as files of a Git
 The script checks the tree, the tag, the version and the changelog. It then runs ruff, mypy and pytest, builds `dist/` with `uv build`, validates it with `twine check`, and installs the wheel alone into an empty environment to check that it pulls in no other package, imports as the right version and runs `syntasks`. Finally it tags `v0.2.0`, pushes `main` and the tag, and creates the GitHub release, with the changelog section plus install instructions as notes.
 
 - A version with a suffix, such as `0.3.0-rc.1`, becomes a **prerelease**.
-- `--draft` publishes a draft to check before announcing; `--skip-tests` skips lint, types and tests (the smoke test below still runs).
+- `--draft` publishes a draft to check before announcing; `--skip-tests` skips lint, types and tests (the wheel smoke test still runs).
 
 You need `uv`, and `gh` signed in with permission to create releases.
 
