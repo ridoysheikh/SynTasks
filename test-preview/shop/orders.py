@@ -12,6 +12,20 @@ module = Module("orders", timeout="30s", retries=3, retry_delay="200ms", max_tas
 logger = logging.getLogger("shop.orders")
 
 
+def node_id() -> str:
+    """The worker process running this task (the web page shows it)."""
+    from .app import app  # noqa: PLC0415
+
+    return app.cluster.node_id
+
+
+@module.task(retries=0)
+async def whoami(pause: float = 0.05) -> str:
+    """Return the worker process that ran it; many of them show the spread."""
+    await asyncio.sleep(pause)
+    return node_id()
+
+
 # Callback: runs once after every successful charge.
 @module.task(retries=0)
 async def audit(outcome: TaskOutcome) -> None:
@@ -26,7 +40,12 @@ async def charge(
     attempt = int(context.message.labels.get("_attempt", 0)) + 1
     if order_id.endswith("7") and attempt == 1:
         raise ConnectionError("payment provider timed out")
-    return {"order": order_id, "cents": cents, "attempt": attempt}
+    return {
+        "order": order_id,
+        "cents": cents,
+        "attempt": attempt,
+        "node": node_id(),
+    }
 
 
 # Order per key: one customer's shipments one at a time, in order.
@@ -39,15 +58,16 @@ async def ship(customer: str, order_id: str) -> dict[str, Any]:
         "order": order_id,
         "started": started,
         "ended": time.time(),
+        "node": node_id(),
     }
 
 
 # Limits across all machines: 3 at once, 10 a second.
 @module.task(max_tasks=3, rate="10/s")
-async def call_partner(n: int) -> dict[str, float]:
+async def call_partner(n: int) -> dict[str, Any]:
     started = time.time()
     await asyncio.sleep(0.25)
-    return {"n": n, "started": started, "ended": time.time()}
+    return {"n": n, "started": started, "ended": time.time(), "node": node_id()}
 
 
 # Request / reply.

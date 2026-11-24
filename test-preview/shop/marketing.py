@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 from syntasks import (
     BatchOutcome,
@@ -14,15 +14,17 @@ from syntasks import (
     every,
 )
 
+from .orders import node_id
+
 module = Module("marketing", timeout="30s", retries=2, max_tasks=50)
 logger = logging.getLogger("shop.marketing")
 
 
 # Declared schedules: reconciled into Redis on start, one run per tick cluster-wide.
 @module.schedule(every("2s"), id="heartbeat", retries=0, max_tasks=1)
-async def heartbeat(info: Annotated[ScheduleInfo, Depends()]) -> int:
+async def heartbeat(info: Annotated[ScheduleInfo, Depends()]) -> dict[str, Any]:
     logger.info("heartbeat #%d (late by %.2fs)", info.run_number, info.late_by)
-    return info.run_number
+    return {"run": info.run_number, "node": node_id()}
 
 
 @module.schedule(

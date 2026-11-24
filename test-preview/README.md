@@ -30,6 +30,47 @@ docker compose down -v                        # when you're done
 
 `SHOP_REDIS_URL` can point at any **disposable** Redis.
 
+## Web servers: try it from a browser
+
+`shop/web.py` is a FastAPI app in front of the same `app` the workers run:
+the web server only sends tasks, reads results and events, schedules posts
+and keeps sockets; the workers do the work. Run it the way you would in
+production, as separate processes that share only Redis.
+
+Install the web dependencies once (`fastapi`, `uvicorn`, `websockets`):
+
+```bash
+uv sync --all-extras --group preview        # from the repository root
+```
+
+Then start five things, each in its own terminal, from `test-preview/`.
+Redis listens on 55460, which is what `syntasks.toml` expects:
+
+```bash
+redis-server --port 55460 --save "" --appendonly no      # or: docker compose up -d --wait
+
+../.venv/bin/syntasks worker                              # worker1 (one "machine", 2 processes)
+../.venv/bin/syntasks worker                              # worker2 (another "machine")
+
+WEB_NAME=web1 ../.venv/bin/uvicorn shop.web:api --port 8001
+WEB_NAME=web2 ../.venv/bin/uvicorn shop.web:api --port 8002
+```
+
+Open <http://127.0.0.1:8001/> and <http://127.0.0.1:8002/>. Each page shows
+which web server served it, and the worker processes grouped by machine.
+Every card is a feature; the cards say what to expect. Things worth doing:
+
+- **Send on one server, read on the other.** Start a charge on web1, then look it up on web2: `GET /api/tasks/<id>`. The task ran on whichever worker had room.
+- **Spread over the workers.** Send 40 tiny tasks: both machines and all four processes get a share.
+- **Kill a worker** (`Ctrl-C` worker1, or `kill -9` its supervisor) while the cluster card refreshes. Its processes disappear, the other machine carries on, the `heartbeat` schedule keeps firing, and a channel it hosted moves.
+- **Two tabs, two web servers.** Connect `staff:ada` on web1 and `staff:alan` on web2 to the live channel: one handler serves both. Alan can read but is refused when he posts; `guest:eve` can't connect.
+- **Watchlists in two tabs.** Open the same user on both servers, subscribe a group of symbols, then use *Restore* in the second tab: it joins the first tab's groups and gets the last values at once. *Vendor calls* shows the vendor is asked once per symbol, and it stops about two seconds after the last tab leaves.
+- **Posts.** Schedule four posts for one owner: the fourth is refused (`max_per_owner = 3`). A post set 20 s ahead runs on a worker and shows `done / ok`.
+
+The endpoints are plain JSON, so `curl` works too, and
+<http://127.0.0.1:8001/docs> lists them all. The `XX-99` price lookup
+raises on the worker on purpose, so it appears under `syntasks queues dlq default`.
+
 ## What the walkthrough does
 
 Each step prints the exact command it runs, so you can repeat any of them
@@ -65,5 +106,7 @@ folder the walkthrough prints.
 | `shop/marketing.py` | `Module("marketing", ...)`: `every` and `calendar` schedules, a runtime template, `fair`, `debounce`, campaign tasks |
 | `shop/live.py` | `Module("live", ...)`: a channel handler with `authorize`, and the `quote` feed |
 | `shop/__main__.py` | `python -m shop <command>`: one command per feature |
+| `shop/web.py` | the FastAPI web server: sends tasks, reads results and events, schedules posts, relays the live channel and the watchlist sockets |
+| `shop/index.html` | the page it serves at `/`: one card per feature |
 | `walkthrough.py` | runs the story above |
 | `docker-compose.yml` | Redis on port 55460, if you'd rather not install `redis-server` |

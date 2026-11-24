@@ -10,6 +10,7 @@ from syntasks.dependencies.ctx import AsyncResolveContext, SyncResolveContext
 from syntasks.dependencies.dependency import Dependency
 from syntasks.dependencies.utils import ParamInfo
 
+FastapiDepends: Any
 try:
     from fastapi.params import Depends as FastapiDepends
 except ImportError:

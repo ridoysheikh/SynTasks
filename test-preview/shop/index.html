@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SynTasks shop</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --ink:#1b2430; --mute:#667085; --line:#d9dee7; --bg:#f6f7f9; --card:#fff; --acc:#2557d6; --ok:#117a45; --bad:#b42318; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, sans-serif; color:var(--ink); background:var(--bg); }
+  header { padding:14px 20px; background:var(--ink); color:#fff; display:flex; gap:16px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:18px; }
+  header span { color:#b8c2d1; }
+  main { max-width:1180px; margin:18px auto; padding:0 16px; display:grid; gap:16px; grid-template-columns:repeat(auto-fit, minmax(520px, 1fr)); }
+  section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+  section.wide { grid-column:1 / -1; }
+  h2 { margin:0 0 2px; font-size:15px; }
+  p.why { margin:0 0 10px; color:var(--mute); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:6px 0; }
+  input, select { padding:5px 7px; border:1px solid var(--line); border-radius:5px; font:inherit; }
+  input.w { width:210px; } input.n { width:70px; }
+  button { padding:5px 11px; border:1px solid var(--acc); background:var(--acc); color:#fff; border-radius:5px; font:inherit; cursor:pointer; }
+  button.alt { background:#fff; color:var(--acc); }
+  button:disabled { opacity:.5; cursor:default; }
+  pre { margin:8px 0 0; padding:8px 10px; background:#0f1722; color:#d6e2f5; border-radius:6px; max-height:210px; overflow:auto; white-space:pre-wrap; word-break:break-word; font:12px/1.4 ui-monospace, monospace; }
+  pre:empty { display:none; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:3px 8px 3px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--mute); font-weight:600; }
+  .tag { display:inline-block; padding:0 6px; border-radius:9px; background:#e7edfb; color:var(--acc); font-size:12px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .mute { color:var(--mute); }
+  .m1 { background:#e5f4ec; color:#117a45; } .m2 { background:#fdeede; color:#b45309; } .m3 { background:#efe7fb; color:#6d28d9; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SynTasks shop</h1>
+  <span>this page is served by <b id="served">…</b></span>
+  <span>open it on two web servers and two workers: it is one app on one Redis</span>
+</header>
+<main>
+
+<section class="wide">
+  <h2>The cluster <span class="mute" id="stamp"></span></h2>
+  <p class="why">Worker processes by machine, the schedules (who ran the last fire), channels and feeds. Refreshes every 2 s. Kill a worker and watch its work move.</p>
+  <div class="row" style="align-items:flex-start; gap:24px">
+    <div style="flex:1; min-width:300px"><table id="nodes"></table></div>
+    <div style="flex:1.4; min-width:360px"><table id="schedules"></table></div>
+  </div>
+  <div class="mute" id="extras"></div>
+</section>
+
+<section>
+  <h2>Retries and callbacks</h2>
+  <p class="why"><code>charge</code>: order ids ending in 7 fail once and are retried; every success runs the audit callback once (see the worker log).</p>
+  <div class="row"><input class="w" id="order" value="A-1007"> <button onclick="charge()">Send charge</button></div>
+  <pre id="o-charge"></pre>
+</section>
+
+<section>
+  <h2>Request / reply</h2>
+  <p class="why"><code>price.call(sku)</code> waits for the worker's value, or raises the task's own error. Try <b>KB-01</b> and <b>XX-99</b>.</p>
+  <div class="row"><input class="w" id="sku" value="KB-01"> <button onclick="price()">Ask price</button></div>
+  <pre id="o-price"></pre>
+</section>
+
+<section>
+  <h2>Spread over the workers</h2>
+  <p class="why">Sends tiny tasks and counts which machine and process ran each: the pool is shared, any web server may send.</p>
+  <div class="row"><input class="n" id="spread-n" type="number" value="40"> <button onclick="spread()">Send tasks</button></div>
+  <pre id="o-spread"></pre>
+</section>
+
+<section>
+  <h2>Order per key</h2>
+  <p class="why">Three shipments each for ada and alan, sent at once. One customer's shipments run one at a time, in order; the two customers run side by side.</p>
+  <div class="row"><button onclick="shipments()">Send 6 shipments</button></div>
+  <pre id="o-ship"></pre>
+</section>
+
+<section>
+  <h2>Cluster-wide limits</h2>
+  <p class="why"><code>max_tasks=3</code> and <code>rate="10/s"</code> hold across all workers: it measures the peak at once and the rate.</p>
+  <div class="row"><input class="n" id="partner-n" type="number" value="12"> <button onclick="partner()">Call the partner API</button></div>
+  <pre id="o-partner"></pre>
+</section>
+
+<section>
+  <h2>Debounce</h2>
+  <p class="why">Ten quick edits of one product: only the last version is reindexed, the others are replaced.</p>
+  <div class="row"><button onclick="debounce()">Send 10 edits</button></div>
+  <pre id="o-debounce"></pre>
+</section>
+
+<section>
+  <h2>Live events</h2>
+  <p class="why">An import task publishes progress and output. This page follows it with server-sent events.</p>
+  <div class="row"><input class="n" id="rows" type="number" value="50"> <button onclick="importCatalog()">Start import</button></div>
+  <pre id="o-import"></pre>
+</section>
+
+<section>
+  <h2>Campaign (batch)</h2>
+  <p class="why">A batch of emails that starts paused. Resume it, cancel the rest, and one summary task runs at the end (worker log).</p>
+  <div class="row">
+    <input class="n" id="camp-n" type="number" value="40"> <button onclick="campaignStart()">Create</button>
+    <button class="alt" onclick="campaignDo('resume')">Resume</button>
+    <button class="alt" onclick="campaignDo('pause')">Pause</button>
+    <button class="alt" onclick="campaignDo('cancel')">Cancel</button>
+  </div>
+  <pre id="o-camp"></pre>
+</section>
+
+<section>
+  <h2>Users schedule posts</h2>
+  <p class="why">Runtime schedules: each owner may have 3 pending posts (the 4th is refused). They live in Redis, not in your database.</p>
+  <div class="row">
+    <input class="w" id="post-owner" value="user:ada">
+    <input class="w" id="post-text" value="New keyboards are in!">
+    <input class="n" id="post-after" value="20s">
+    <button onclick="postAdd()">Schedule</button>
+  </div>
+  <table id="posts"></table>
+  <pre id="o-post"></pre>
+</section>
+
+<section>
+  <h2>Live channel</h2>
+  <p class="why"><code>sales:live</code>: one handler for the whole cluster. staff:ada and staff:alan may read, only staff:ada may post, guest:eve is refused. Connect two tabs, one on each web server.</p>
+  <div class="row">
+    <select id="who"><option>staff:ada</option><option>staff:alan</option><option>guest:eve</option></select>
+    <button onclick="liveConnect()">Connect</button>
+    <input class="w" id="live-text" value="Flash sale until 18:00!">
+    <button class="alt" onclick="liveSend()">Send</button>
+  </div>
+  <pre id="o-live"></pre>
+</section>
+
+<section class="wide">
+  <h2>Watchlists (feeds)</h2>
+  <p class="why">Groups of symbols you subscribe to and drop at runtime. The cluster asks the vendor once per symbol however many tabs and servers watch it, stops when nobody does, and a new tab gets the last value at once. Try two tabs with the same user, one per web server, then Restore.</p>
+  <div class="row">
+    <input class="n" id="wl-user" value="ada" title="user"> user
+    <button class="alt" onclick="wlOpen()">Open socket</button>
+    <input class="n" id="wl-group" value="watchlist" style="width:110px" title="group">
+    <input class="w" id="wl-symbols" value="aapl, msft, nvda" title="symbols">
+    <button onclick="wlSub()">Subscribe</button>
+    <button class="alt" onclick="wlUnsub(false)">Drop symbols</button>
+    <button class="alt" onclick="wlUnsub(true)">Drop group</button>
+    <button class="alt" onclick="wlSend({op:'list'})">List</button>
+    <button class="alt" onclick="wlSend({op:'restore'})">Restore</button>
+    <button class="alt" onclick="vendor()">Vendor calls</button>
+  </div>
+  <div class="row" style="align-items:flex-start; gap:24px">
+    <div style="flex:1; min-width:320px"><table id="prices"></table></div>
+    <div style="flex:1; min-width:320px"><pre id="o-wl" style="margin-top:0"></pre></div>
+  </div>
+</section>
+
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const J = x => JSON.stringify(x);
+let server = "?";
+
+async function api(method, url, body) {
+  const res = await fetch(url, {method, headers: {"content-type": "application/json"}, body: body === undefined ? undefined : J(body)});
+  server = res.headers.get("x-served-by") || server;
+  let data = null;
+  try { data = await res.json(); } catch (e) {}
+  return {ok: res.ok, status: res.status, data};
+}
+function out(id, text, keep) { const el = $(id); el.textContent = (keep ? el.textContent : "") + text + "\n"; el.scrollTop = el.scrollHeight; }
+function where(r) { return r && r.ran_on ? ` on ${r.ran_on.machine || "?"} / ${r.ran_on.node}` : ""; }
+async function finish(taskId) {
+  for (let i = 0; i < 150; i++) {
+    const {data} = await api("GET", `/api/tasks/${taskId}`);
+    if (data.done) return data;
+    await sleep(200);
+  }
+  return {done: false};
+}
+
+async function charge() {
+  out("o-charge", "sending...");
+  const {data} = await api("POST", "/api/charges", {order_id: $("order").value, cents: 1500});
+  out("o-charge", `sent by ${data.served_by}: task ${data.task_id.slice(0, 8)}`);
+  const r = await finish(data.task_id);
+  out("o-charge", r.ok ? `ok${where(r)}: ${J(r.value)}${r.value && r.value.attempt > 1 ? "   (retried: attempt " + r.value.attempt + ")" : ""}` : `failed: ${J(r.error)}`, true);
+}
+async function price() {
+  const {ok, data} = await api("POST", `/api/prices/${encodeURIComponent($("sku").value)}`);
+  out("o-price", ok ? `${data.sku} costs ${data.cents} cents (asked through ${data.served_by})` : `${data.detail}`);
+}
+async function spread() {
+  out("o-spread", "running...");
+  const {ok, data} = await api("POST", "/api/spread", {count: +$("spread-n").value});
+  if (!ok) return out("o-spread", data.detail);
+  out("o-spread", `${data.sent} tasks sent by ${data.served_by}\nby machine: ${J(data.by_machine)}\nby process:`);
+  for (const [n, c] of Object.entries(data.by_node)) out("o-spread", `  ${n}  ${c}`, true);
+}
+async function shipments() {
+  out("o-ship", "sending...");
+  const plan = [["ada","A-1"],["alan","B-1"],["ada","A-2"],["alan","B-2"],["ada","A-3"],["alan","B-3"]];
+  const ids = [];
+  for (const [customer, order_id] of plan) ids.push((await api("POST", "/api/shipments", {customer, order_id})).data.task_id);
+  const rs = await Promise.all(ids.map(finish));
+  const t0 = Math.min(...rs.map(r => r.value.started));
+  out("o-ship", "customer  order   started - ended (s)   ran on");
+  for (const r of rs.sort((a, b) => a.value.started - b.value.started))
+    out("o-ship", `${r.value.customer.padEnd(8)}  ${r.value.order}     ${(r.value.started - t0).toFixed(1)} - ${(r.value.ended - t0).toFixed(1)}${where(r)}`, true);
+}
+async function partner() {
+  out("o-partner", "running...");
+  const {ok, data} = await api("POST", "/api/partner", {count: +$("partner-n").value});
+  out("o-partner", ok ? `${data.calls} calls: at most ${data.peak_at_once} at once (limit ${data.limit_at_once}), ${data.per_second}/s (limit ${data.limit_per_second}/s)\nran on: ${data.ran_on.join(", ")}` : data.detail);
+}
+async function debounce() {
+  out("o-debounce", "sending 10 edits...");
+  const ids = [];
+  for (let v = 1; v <= 10; v++) ids.push((await api("POST", "/api/reindex", {sku: "KB-01", version: v})).data.task_id);
+  const rs = await Promise.all(ids.map(finish));
+  rs.forEach((r, i) => out("o-debounce", `version ${i + 1}: ` + (r.ok ? `reindexed${where(r)}` : r.error.type), true));
+}
+function importCatalog() {
+  out("o-import", "starting...");
+  api("POST", "/api/imports", {rows: +$("rows").value}).then(({data}) => {
+    out("o-import", `task ${data.task_id.slice(0, 8)} (sent by ${data.served_by})`);
+    const es = new EventSource(`/api/tasks/${data.task_id}/events`);
+    es.onmessage = e => {
+      const ev = JSON.parse(e.data);
+      out("o-import", `${ev.kind.padEnd(9)} ${ev.data == null ? "" : J(ev.data)}`, true);
+      if (["succeeded", "failed", "cancelled", "error"].includes(ev.kind)) es.close();
+    };
+    es.onerror = () => es.close();
+  });
+}
+
+let camp = null;
+async function showCamp(d) { camp = d.id; out("o-camp", `${d.id}: ${d.state}   total ${d.total}  done ${d.done}  failed ${d.failed}  cancelled ${d.cancelled}  pending ${d.pending}`, true); }
+async function campaignStart() { out("o-camp", "creating..."); await showCamp((await api("POST", "/api/campaigns", {size: +$("camp-n").value})).data); }
+async function campaignDo(action) {
+  if (!camp) return out("o-camp", "create a campaign first", true);
+  await showCamp((await api("POST", `/api/campaigns/${camp}/${action}`)).data);
+  if (action === "resume") for (let i = 0; i < 8; i++) { await sleep(400); await showCamp((await api("GET", `/api/campaigns/${camp}`)).data); }
+}
+
+async function posts() {
+  const {data} = await api("GET", "/api/posts");
+  $("posts").innerHTML = "<tr><th>owner</th><th>post</th><th>when</th><th>state</th><th></th></tr>" +
+    data.map(p => `<tr><td>${p.owner}</td><td>${(p.meta || {}).title || ""}</td><td>${p.when}</td><td>${p.state}${p.last_status ? " / " + p.last_status : ""}</td><td><button class="alt" onclick="postCancel('${p.id}')">cancel</button></td></tr>`).join("");
+}
+async function postAdd() {
+  const {ok, data} = await api("POST", "/api/posts", {owner: $("post-owner").value, text: $("post-text").value, after: $("post-after").value});
+  out("o-post", ok ? `scheduled: ${data.when}` : `refused (${data.detail})`);
+  posts();
+}
+async function postCancel(id) { await api("DELETE", `/api/posts/${id}`); posts(); }
+
+let live = null;
+function liveConnect() {
+  if (live) live.close();
+  const who = $("who").value;
+  live = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/live?identity=${encodeURIComponent(who)}&name=${encodeURIComponent(who.split(":")[1])}`);
+  out("o-live", `connecting as ${who}...`);
+  live.onmessage = e => { const m = JSON.parse(e.data); out("o-live", m.op === "message" ? `${m.kind}: ${J(m.data)}` : `${m.op}: ${m.error || m.served_by}`, true); };
+  live.onclose = () => out("o-live", "closed", true);
+}
+function liveSend() { if (live) live.send($("live-text").value); else out("o-live", "connect first", true); }
+
+let wl = null, quotes = {};
+function wlOpen() {
+  if (wl) wl.close();
+  quotes = {}; renderQuotes();
+  wl = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/watch?user=${encodeURIComponent($("wl-user").value)}`);
+  wl.onopen = () => out("o-wl", `socket open for user ${$("wl-user").value}`);
+  wl.onclose = () => out("o-wl", "socket closed", true);
+  wl.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.op === "data") { quotes[m.channel] = {...(m.data || {}), cached: m.cached, state: (quotes[m.channel] || {}).state}; renderQuotes(); }
+    else if (m.op === "status") { quotes[m.channel] = {...(quotes[m.channel] || {}), state: m.data.state}; renderQuotes(); }
+    else out("o-wl", `${m.op}${m.served_by ? " (via " + m.served_by + ")" : ""}: ${J({...m, op: undefined, served_by: undefined})}`, true);
+  };
+}
+function renderQuotes() {
+  $("prices").innerHTML = "<tr><th>channel</th><th>price</th><th>vendor call #</th><th></th></tr>" +
+    Object.entries(quotes).sort().map(([c, q]) => `<tr><td>${c}</td><td>${q.price ?? ""}</td><td>${q.call ?? ""}</td><td>${q.cached ? '<span class="tag">last value</span> ' : ""}${q.state && q.state !== "live" ? '<span class="bad">' + q.state + "</span>" : ""}</td></tr>`).join("");
+}
+function wlSend(req) { if (!wl || wl.readyState !== 1) return out("o-wl", "open the socket first", true); wl.send(J(req)); }
+function wlChannels() { return $("wl-symbols").value.split(/[ ,]+/).filter(Boolean).map(s => "quote:" + s); }
+function wlSub() { wlSend({op: "subscribe", group: $("wl-group").value, channels: wlChannels()}); }
+function wlUnsub(all) {
+  const req = {op: "unsubscribe", group: $("wl-group").value};
+  if (!all) req.channels = wlChannels();
+  wlSend(req);
+  setTimeout(() => { for (const c of Object.keys(quotes)) if (all || wlChannels().map(x => x.toUpperCase()).includes(c)) delete quotes[c]; renderQuotes(); }, 200);
+}
+async function vendor() {
+  const {data} = await api("GET", "/api/vendor-calls?symbols=AAPL,MSFT,NVDA");
+  out("o-wl", `vendor calls so far: ${J(data)} (it stops growing when nobody watches)`, true);
+}
+
+function chip(machine) { const n = (machine || "").replace("machine ", ""); return `<span class="tag m${n}">${machine || "?"}</span>`; }
+async function refresh() {
+  try {
+    const {data: c} = await api("GET", "/api/cluster");
+    $("served").textContent = c.served_by;
+    $("nodes").innerHTML = "<tr><th>machine</th><th>worker process</th><th>running</th><th>channels</th></tr>" +
+      c.nodes.map(n => `<tr><td>${chip(n.machine)}</td><td>${n.node}</td><td>${n.running}</td><td>${n.channels}</td></tr>`).join("");
+    const {data: s} = await api("GET", "/api/schedules");
+    $("schedules").innerHTML = "<tr><th>schedule</th><th>when</th><th>runs</th><th>last ran on</th></tr>" +
+      s.filter(x => x.source === "code").map(x => `<tr><td>${x.id}</td><td>${x.when}</td><td>${x.runs}</td><td>${x.last_ran_on ? chip(x.last_ran_on.machine) + " " + x.last_ran_on.node.split("-").slice(-2).join("-") : ""}</td></tr>`).join("");
+    const ch = c.channels.filter(x => x.owner).map(x => `${x.name} (handler on ${chip(x.owner_machine)}, ${x.readers} readers)`).join(" · ");
+    $("extras").innerHTML = `channels: ${ch || "none yet"} &nbsp; feeds: ${J(c.feeds)} &nbsp; queues: ${c.queues.map(q => `${q.name} ${q.waiting} waiting, ${q.running} running, ${q.dead} dead`).join("; ")}`;
+    $("stamp").textContent = new Date().toLocaleTimeString();
+    if (document.activeElement.tagName !== "INPUT") posts();
+  } catch (e) { $("served").textContent = "unreachable"; }
+}
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>
