@@ -10,7 +10,3 @@ url = "${REDIS_URL:-redis://localhost:6379/0}"
 
 [worker]
 processes = 2
-
-# Operations settings beat code: this overrides timeout="30s" in tasks.py.
-[tasks."tasks:add"]
-timeout = "10s"

@@ -11,6 +11,14 @@ from syntasks.config import Config
 
 AppFactory = Callable[..., SynTasks]
 
+# Root options of test apps: the required limits, unbounded on purpose.
+ROOT_OPTIONS: dict[str, Any] = {
+    "timeout": None,
+    "retries": 0,
+    "max_tasks": None,
+    "retry_jitter": False,
+}
+
 
 def fast_config(redis_url: str, name: str) -> Config:
     config = Config()
@@ -25,7 +33,6 @@ def fast_config(redis_url: str, name: str) -> Config:
     config.node.dead_after = 3.0
     config.scheduler.max_sleep = 0.1
     config.scheduler.lease_ttl = 1.0
-    config.defaults.retry_jitter = False
     return config
 
 
@@ -34,11 +41,14 @@ async def app_factory(redis_url: str) -> AsyncIterator[AppFactory]:
     name = f"t{uuid.uuid4().hex[:8]}"
     apps: list[SynTasks] = []
 
-    def make(configure: Callable[[Config], None] | None = None) -> SynTasks:
+    def make(
+        configure: Callable[[Config], None] | None = None,
+        **root: Any,
+    ) -> SynTasks:
         config = fast_config(redis_url, name)
         if configure is not None:
             configure(config)
-        app = SynTasks(config)
+        app = SynTasks(config, **{**ROOT_OPTIONS, **root})
         apps.append(app)
         return app
 

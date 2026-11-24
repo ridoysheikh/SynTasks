@@ -21,7 +21,8 @@ async def test_add() -> None:
 
 Point the app at a disposable Redis (`SynTasks(redis_url=...)` or
 `SYNTASKS__REDIS__URL`) and give each test its own `app.name` to keep
-their keys apart.
+their keys apart. Test apps can set the required limits once, at the
+root: `SynTasks(name="test-1", timeout=None, retries=0, max_tasks=None)`.
 
 ## Without Redis
 

@@ -50,11 +50,11 @@ async def test_sync_task_and_send_by_name(app_factory: AppFactory) -> None:
 
 async def test_priorities(app_factory: AppFactory) -> None:
     def configure(config: Any) -> None:
-        config.queues["default"] = type(config.queue("x"))(priorities=3)
         config.worker.max_async_tasks = 1
         config.worker.prefetch = 0
 
     app = app_factory(configure)
+    app.queue("default", priorities=3)
     order: list[str] = []
 
     @app.task
@@ -174,10 +174,8 @@ async def test_unique_for(app_factory: AppFactory) -> None:
 
 
 async def test_max_length_rejects(app_factory: AppFactory) -> None:
-    def configure(config: Any) -> None:
-        config.queues["default"] = type(config.queue("x"))(max_length=2)
-
-    app = app_factory(configure)
+    app = app_factory()
+    app.queue("default", max_length=2)
 
     @app.task
     async def job() -> None: ...
@@ -196,7 +194,7 @@ async def test_cluster_concurrency_across_workers(app_factory: AppFactory) -> No
     def build() -> SynTasks:
         app = app_factory()
 
-        @app.task(task_name="limited", concurrency=2)
+        @app.task(task_name="limited", max_tasks=2)
         async def limited() -> None:
             nonlocal active, peak, done
             active += 1
@@ -221,7 +219,7 @@ async def test_node_concurrency(app_factory: AppFactory) -> None:
     peak = 0
     done = 0
 
-    @app.task(node_concurrency=1)
+    @app.task(max_tasks_per_node=1)
     async def serial() -> None:
         nonlocal active, peak, done
         active += 1
@@ -258,7 +256,7 @@ async def test_key_concurrency_keeps_order(app_factory: AppFactory) -> None:
     active: dict[str, int] = {}
     overlap = False
 
-    @app.task(concurrency_key="customer")
+    @app.task(max_tasks_per_key=1, key="customer")
     async def charge(customer: str, n: int) -> None:
         nonlocal overlap
         active[customer] = active.get(customer, 0) + 1
@@ -366,7 +364,7 @@ async def test_process_memory_limit(app_factory: AppFactory) -> None:
     )
     async with running(app):
         result = await (await hog.kiq(400)).wait_result(timeout=30)
-    assert isinstance(result.error, (TaskMemoryError, MemoryError))
+    assert isinstance(result.error, TaskMemoryError)
 
 
 async def test_pause_resume(app_factory: AppFactory) -> None:
@@ -415,7 +413,7 @@ async def test_gated_task_sent_by_unaware_sender(app_factory: AppFactory) -> Non
     app = app_factory()
     ran: list[int] = []
 
-    @app.task(task_name="gated", concurrency=1)
+    @app.task(task_name="gated", max_tasks=1)
     async def gated(x: int) -> None:
         ran.append(x)
 

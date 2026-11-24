@@ -12,6 +12,7 @@ from syntasks.brokers.inmemory_broker import InMemoryBroker
 from syntasks.brokers.multi_broker import MultiBroker
 from syntasks.brokers.shared_broker import async_shared_broker
 from syntasks.channels import Channel, ChannelMessage
+from syntasks.channels.channel import ChannelDenied, ConnectRequest, Presence
 from syntasks.config import Config, ConfigError, load_config
 from syntasks.context import Context
 from syntasks.dependencies import Depends
@@ -30,6 +31,7 @@ from syntasks.exceptions import (
     SynTasksResultTimeoutError,
     TaskCancelledError,
     TaskMemoryError,
+    TaskSupersededError,
     TaskTimeoutError,
 )
 from syntasks.funcs import gather
@@ -40,6 +42,7 @@ from syntasks.middlewares import (
     SimpleRetryMiddleware,
     SmartRetryMiddleware,
 )
+from syntasks.modules import Module, ModuleNotAttachedError
 from syntasks.redis import (
     Redis,
     RedisListBroker,
@@ -48,11 +51,22 @@ from syntasks.redis import (
     RedisStreamBroker,
 )
 from syntasks.result import SynTasksResult
+from syntasks.results.completion import (
+    Batch,
+    BatchOutcome,
+    BatchProgress,
+    GroupOutcome,
+    TaskOutcome,
+)
+from syntasks.results.events import Emit
 from syntasks.scheduler import (
+    Runtime,
     ScheduleError,
     ScheduleInfo,
+    ScheduleLimitError,
     after,
     at,
+    calendar,
     cron,
     every,
 )
@@ -67,20 +81,30 @@ __all__ = [
     "AsyncResultBackend",
     "AsyncSynTasksDecoratedTask",
     "AsyncSynTasksTask",
+    "Batch",
+    "BatchOutcome",
+    "BatchProgress",
     "BrokerMessage",
     "Channel",
+    "ChannelDenied",
     "ChannelMessage",
     "Config",
     "ConfigError",
+    "ConnectRequest",
     "Context",
     "Deadline",
     "Depends",
     "DuplicateTaskError",
+    "Emit",
+    "GroupOutcome",
     "InMemoryBroker",
+    "Module",
+    "ModuleNotAttachedError",
     "MultiBroker",
     "NoResultError",
     "PayloadInvalidError",
     "PayloadTooLargeError",
+    "Presence",
     "PrometheusMiddleware",
     "QueueFullError",
     "Redis",
@@ -91,8 +115,10 @@ __all__ = [
     "ResultGetError",
     "ResultIsReadyError",
     "ResultTooLargeError",
+    "Runtime",
     "ScheduleError",
     "ScheduleInfo",
+    "ScheduleLimitError",
     "SecurityError",
     "SendTaskError",
     "SimpleRetryMiddleware",
@@ -109,11 +135,14 @@ __all__ = [
     "SynTasksState",
     "TaskCancelledError",
     "TaskMemoryError",
+    "TaskOutcome",
+    "TaskSupersededError",
     "TaskTimeoutError",
     "__version__",
     "after",
     "async_shared_broker",
     "at",
+    "calendar",
     "cron",
     "every",
     "gather",

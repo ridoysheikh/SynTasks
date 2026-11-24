@@ -26,16 +26,20 @@ async for handle, result in group.as_completed():  # as they finish
 ```
 
 Group members report to one group stream, so waiting for 10 000 tasks is
-one blocking read.
+one blocking read. To run something once the whole group is done, on any
+machine, use `group.then(task)` ([Callbacks and batches](callbacks-and-batches.md)).
 
 ## Progress
 
 ```python
+from typing import Annotated
+
 from syntasks import Depends
 from syntasks.depends.progress_tracker import ProgressTracker, TaskState
 
+
 @app.task
-async def import_file(path: str, progress: ProgressTracker[int] = Depends()) -> None:
+async def import_file(path: str, progress: Annotated[ProgressTracker[int], Depends()]) -> None:
     for percent in range(0, 101, 10):
         await progress.set_progress(TaskState.STARTED, percent)
 
@@ -43,6 +47,42 @@ task = await import_file.kiq("data.csv")
 async for update in task.watch_progress():
     print(update.meta)
 ```
+
+## Live events
+
+With `events=True`, a task publishes its life to the channel `task:<id>`,
+and its code can stream partial output with `Emit`:
+
+```python
+from syntasks import Depends, Emit
+
+
+@app.task(events=True, timeout="2m", retries=0, max_tasks=20)
+async def generate(prompt: str, emit: Annotated[Emit, Depends()]) -> str:
+    async for token in model.stream(prompt):
+        await emit(token)
+    return "done"
+
+
+task = await generate.kiq("hello")
+async for event in task.events(timeout=120):
+    print(event.kind, event.data)     # queued, started, emit, ..., succeeded
+```
+
+| Kind | Data |
+|---|---|
+| `queued` | – |
+| `started` | `{"attempt": n}` |
+| `progress` | what `ProgressTracker.set_progress` stored |
+| `emit` | what the task emitted |
+| `retrying` | `{"error": ...}` |
+| `succeeded` | `{"return_value": ...}` (if it's JSON) |
+| `failed`, `cancelled` | `{"error": ..., "error_type": ...}` |
+
+`task.events()` replays what the channel still keeps
+(`[channels] retention`), so a client that connects late still sees the
+start, and stops after the last event. A web handler forwards it to a
+websocket or server-sent events. Tasks without `events` publish nothing.
 
 ## Log capture
 

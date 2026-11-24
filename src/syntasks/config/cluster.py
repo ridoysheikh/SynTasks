@@ -1,31 +1,29 @@
 """
-Cluster-scope settings: the same values on every machine.
+Cluster agreement: every machine enforces the same limits.
 
-On startup each worker publishes its cluster-scope settings (``[defaults]``,
-``[tasks.*]``, ``[queues.*]``, ``[scheduler]``) to Redis together with
-``[app] revision``. A worker whose revision is older than the stored one
-(an old deploy restarting late) adopts the stored settings instead, so
-machines never enforce different global limits. Without revisions the
-last writer wins.
+On startup each worker publishes a manifest: the effective options of every
+task declared in its code, its declared queues and its ``[scheduler]``
+settings, with ``[app] revision``. A worker whose revision is older than the
+stored one (an old deploy restarting late) adopts the stored numbers for the
+tasks and queues it also has, so machines never enforce different global
+limits. Without revisions the last writer wins.
 """
 
 import dataclasses
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from syntasks.cluster.scripts import Script
 from syntasks.config.loader import build
-from syntasks.config.schema import (
-    Config,
-    QueueConfig,
-    SchedulerConfig,
-    TaskConfig,
-    TaskDefaults,
-)
-from syntasks.redis.client import Redis
+from syntasks.config.schema import QueueConfig, SchedulerConfig
+from syntasks.units import Rate
 
-__all__ = ["cluster_settings", "publish_cluster_config"]
+if TYPE_CHECKING:  # pragma: no cover
+    from syntasks.app import SynTasks
+    from syntasks.options import TaskOptions
+
+__all__ = ["manifest", "publish_cluster_config"]
 
 logger = logging.getLogger("syntasks.config")
 
@@ -44,77 +42,88 @@ return {'ok', ARGV[2], previous}
 )
 
 
-def cluster_settings(config: Config) -> dict[str, Any]:
-    """
-    The cluster-scope part of a config as plain data.
+def _options_data(options: "TaskOptions") -> dict[str, Any]:
+    data = dataclasses.asdict(options)
+    data["tags"] = list(options.tags)
+    return data
 
-    :param config: config.
-    :return: plain data.
+
+def _options_from(data: dict[str, Any]) -> "TaskOptions":
+    from syntasks.options import TaskOptions  # noqa: PLC0415
+
+    values = dict(data)
+    values["tags"] = tuple(values.get("tags") or ())
+    rate = values.get("rate")
+    values["rate"] = Rate(**rate) if rate else None
+    known = {f.name for f in dataclasses.fields(TaskOptions)}
+    return TaskOptions(**{k: v for k, v in values.items() if k in known})
+
+
+def manifest(app: "SynTasks") -> dict[str, Any]:
+    """
+    What this node's code declares, as plain data.
+
+    :param app: the app.
+    :return: tasks' effective options, queues and scheduler settings.
     """
     return {
-        "defaults": dataclasses.asdict(config.defaults),
         "tasks": {
-            name: dataclasses.asdict(task) for name, task in config.tasks.items()
+            name: _options_data(app.options_for(name))
+            for name in sorted(app.declared_tasks)
         },
         "queues": {
-            name: dataclasses.asdict(queue) for name, queue in config.queues.items()
+            name: dataclasses.asdict(options)
+            for name, options in sorted(app.declared_queues.items())
         },
-        "scheduler": dataclasses.asdict(config.scheduler),
+        "scheduler": dataclasses.asdict(app.config.scheduler),
     }
 
 
-def _apply(config: Config, data: dict[str, Any]) -> None:
-    config.defaults = build(TaskDefaults, data["defaults"], "defaults")
-    config.tasks = {
-        name: build(TaskConfig, value, f"tasks.{name}")
-        for name, value in data["tasks"].items()
-    }
-    config.queues = {
-        name: build(QueueConfig, value, f"queues.{name}")
-        for name, value in data["queues"].items()
-    }
-    local_enabled = config.scheduler.enabled
-    config.scheduler = build(SchedulerConfig, data["scheduler"], "scheduler")
-    config.scheduler.enabled = local_enabled
+def _adopt(app: "SynTasks", data: dict[str, Any]) -> None:
+    for name, options in data.get("tasks", {}).items():
+        if name in app.declared_tasks:
+            app.adopted_options[name] = _options_from(options)
+    for name, options in data.get("queues", {}).items():
+        if name in app.declared_queues:
+            app.declared_queues[name] = build(QueueConfig, options, f"queue {name}")
+    local_enabled = app.config.scheduler.enabled
+    app.config.scheduler = build(SchedulerConfig, data["scheduler"], "scheduler")
+    app.config.scheduler.enabled = local_enabled
 
 
-async def publish_cluster_config(
-    redis: Redis,
-    key: str,
-    config: Config,
-    node_id: str,
-) -> bool:
+async def publish_cluster_config(app: "SynTasks") -> bool:
     """
-    Publish this node's cluster settings, or adopt newer stored ones.
+    Publish this node's manifest, or adopt a newer stored one.
 
-    :param redis: client.
-    :param key: config hash key.
-    :param config: this node's config (updated in place when adopting).
-    :param node_id: this node's id.
-    :return: True if the stored settings were adopted.
+    :param app: the app (updated in place when adopting).
+    :return: True if the stored manifest was adopted.
     """
-    mine = cluster_settings(config)
+    mine = manifest(app)
     encoded = json.dumps(mine, sort_keys=True, separators=(",", ":"))
-    revision = "" if config.app.revision is None else str(config.app.revision)
-    reply = await _PUBLISH(redis, [key], [revision, encoded, node_id])
+    revision = "" if app.config.app.revision is None else str(app.config.app.revision)
+    reply = await _PUBLISH(
+        app.redis,
+        [app.keys("cfg", "cluster")],
+        [revision, encoded, app.cluster.node_id],
+    )
     status = reply[0].decode()
     if status == "stale":
         stored = json.loads(reply[2])
         if stored != mine:
             logger.warning(
-                "This node's config (revision %s) is older than the cluster's "
+                "This node's code (revision %s) is older than the cluster's "
                 "(revision %s); using the cluster's task, queue and scheduler "
-                "settings.",
+                "limits.",
                 revision or "none",
                 reply[1].decode(),
             )
-        _apply(config, stored)
+        _adopt(app, stored)
         return True
     previous = reply[2]
     if previous and json.loads(previous) != mine and not revision:
         logger.warning(
-            "Cluster settings changed with this node's start, and no [app] revision "
-            "is set. During rolling deploys set a revision so old nodes don't "
-            "override new settings.",
+            "Task, queue or scheduler limits changed with this node's start, and "
+            "no [app] revision is set. During rolling deploys set a revision so "
+            "old nodes don't override new limits.",
         )
     return False

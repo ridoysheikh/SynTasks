@@ -86,6 +86,9 @@ class AppResultBackend(RedisResultBackend[Any]):
         )
         pipe.add("PEXPIRE", stream, 3_600_000)
         await pipe.execute()
+        events = getattr(self.app, "events", None)
+        if events is not None and task_id in events.active:
+            await events.publish(task_id, "progress", progress.to_dict())
 
     async def watch_progress(
         self,
@@ -193,12 +196,12 @@ class AppResultBackend(RedisResultBackend[Any]):
 
     async def set_result(self, task_id: str, result: SynTasksResult[Any]) -> None:
         """
-        Save a result with the default TTL.
+        Save a result with the app's default TTL.
 
         :param task_id: task id.
         :param result: result.
         """
-        await self.store(task_id, result, ttl=self.app.config.defaults.result_ttl)
+        await self.store(task_id, result, ttl=self.app.options_for("").result_ttl)
 
     async def wait(self, task_id: str, timeout: float | None) -> bool:
         """

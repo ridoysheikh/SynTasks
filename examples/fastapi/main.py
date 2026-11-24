@@ -52,3 +52,16 @@ async def room_socket(ws: WebSocket, room: str) -> None:
             pass
         finally:
             forwarding.cancel()
+
+
+@api.websocket("/ticker/{symbol}")
+async def ticker_socket(ws: WebSocket, symbol: str) -> None:
+    """Every uvicorn process and every user shares the one feed of this symbol."""
+    await ws.accept()
+    async with app.channels.connect(f"ticker:{symbol}", identity="anonymous") as conn:
+        try:
+            async for message in conn:
+                if message.kind == "message":
+                    await ws.send_json(message.data)
+        except WebSocketDisconnect:
+            pass

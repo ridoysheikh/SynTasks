@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from syntasks.scheduler.cron import CronExpression, is_now
+from syntasks.scheduler.recurrence import Cron
 
 
 @pytest.mark.parametrize(
@@ -82,3 +83,40 @@ def test_next_after_dst_and_leap() -> None:
     assert CronExpression.parse("@hourly").next_after(
         dt.datetime(2026, 1, 1, 10, 5, tzinfo=dt.UTC),
     ) == dt.datetime(2026, 1, 1, 11, 0, tzinfo=dt.UTC)
+
+
+def _fires(expression: str, count: int) -> list[str]:
+    rule = Cron(expression)
+    after = int(dt.datetime(2026, 1, 1, tzinfo=dt.UTC).timestamp() * 1000)
+    out = []
+    for _ in range(count):
+        after = rule.next_after(after)  # type: ignore[assignment]
+        moment = dt.datetime.fromtimestamp(after / 1000, tz=dt.UTC)
+        out.append(moment.strftime("%Y-%m-%d %H:%M"))
+    return out
+
+
+def test_cron_nth_weekday() -> None:
+    assert _fires("0 9 * * mon#1", 3) == [
+        "2026-01-05 09:00",
+        "2026-02-02 09:00",
+        "2026-03-02 09:00",
+    ]
+
+
+def test_cron_last_weekday() -> None:
+    assert _fires("0 17 * * fri#L", 2) == ["2026-01-30 17:00", "2026-02-27 17:00"]
+    assert _fires("0 17 * * 5L", 1) == ["2026-01-30 17:00"]
+
+
+def test_cron_last_day_of_month() -> None:
+    assert _fires("0 23 L * *", 3) == [
+        "2026-01-31 23:00",
+        "2026-02-28 23:00",
+        "2026-03-31 23:00",
+    ]
+
+
+def test_cron_invalid_nth() -> None:
+    with pytest.raises(ValueError, match="1-5 or L"):
+        CronExpression.parse("0 9 * * mon#6")

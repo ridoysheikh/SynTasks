@@ -20,6 +20,7 @@ import sys
 import time
 import traceback
 from multiprocessing.connection import Connection
+from pathlib import Path
 from typing import Any
 
 from syntasks.exceptions import TaskMemoryError, TaskTimeoutError
@@ -83,15 +84,38 @@ def _resolve(module_name: str, name: str) -> Any:
     return found
 
 
+def _import_root(module_name: str) -> str | None:
+    """
+    The ``sys.path`` entry a module was imported from.
+
+    Workers import the app with the project folder on ``sys.path`` only
+    while loading it, so a child process must be told where to look.
+
+    :param module_name: dotted module name.
+    :return: directory, or None if unknown.
+    """
+    top = sys.modules.get(module_name.split(".", 1)[0])
+    path = getattr(top, "__file__", None)
+    if not path:
+        return None
+    root = Path(path).resolve().parent
+    if Path(path).name == "__init__.py":
+        root = root.parent
+    return str(root)
+
+
 def _child_main(
     conn: Connection,
     target: Any,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     memory_limit: int | None,
+    import_root: str | None = None,
 ) -> None:  # pragma: no cover (runs in the child)
     if memory_limit:
         set_memory_limit(memory_limit)
+    if import_root and import_root not in sys.path:
+        sys.path.insert(0, import_root)
     try:
         func = _resolve(*target) if isinstance(target, tuple) else target
         if inspect.iscoroutinefunction(func):
@@ -121,7 +145,7 @@ def _context() -> Any:
     return multiprocessing.get_context("spawn")
 
 
-async def run_isolated(  # noqa: C901
+async def run_isolated(  # noqa: C901, PLR0912
     func: Any,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
@@ -149,9 +173,10 @@ async def run_isolated(  # noqa: C901
     ctx = _context()
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     target = (func.__module__, func.__name__) if hasattr(func, "__module__") else func
+    root = _import_root(func.__module__) if hasattr(func, "__module__") else None
     process = ctx.Process(
         target=_child_main,
-        args=(child_conn, target, args, kwargs, memory_limit),
+        args=(child_conn, target, args, kwargs, memory_limit, root),
         daemon=True,
     )
     process.start()
@@ -168,6 +193,11 @@ async def run_isolated(  # noqa: C901
                     break
                 if status == "ok":
                     return value
+                if isinstance(value, MemoryError) and memory_limit is not None:
+                    # The child hit its address-space limit (RLIMIT_AS).
+                    raise TaskMemoryError(
+                        task_name=task_name, limit=memory_limit
+                    ) from value
                 raise value
             if not process.is_alive():
                 break

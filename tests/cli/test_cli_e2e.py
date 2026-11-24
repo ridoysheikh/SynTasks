@@ -1,6 +1,7 @@
 """Run the real ``syntasks`` CLI against a throwaway Redis."""
 
 import asyncio
+import json
 import os
 import signal
 import subprocess
@@ -17,14 +18,18 @@ from syntasks.config import load_config
 APP = """
 from syntasks import SynTasks, every
 
-app = SynTasks()
+app = SynTasks(timeout="1m", retries=0, max_tasks=None)
 
-@app.task(retries=0)
+@app.task(timeout="5s")
 async def add(a: int, b: int) -> int:
     return a + b
 
-@app.task(schedule=every("200ms", id="tick"))
+@app.schedule(every("200ms"), id="tick")
 async def tick() -> None:
+    pass
+
+@app.schedule(runtime=True)
+async def remind(note: str) -> None:
     pass
 """
 
@@ -51,8 +56,6 @@ def _project(tmp_path: Path, redis_url: str) -> Path:
             max_sleep = "100ms"
             min_interval = "100ms"
 
-            [tasks."e2e_app:add"]
-            timeout = "5s"
             """,
         ),
     )
@@ -70,14 +73,17 @@ def _cli(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-async def test_worker_and_management_commands(tmp_path: Path, redis_url: str) -> None:
+async def test_worker_and_management_commands(  # noqa: PLR0915
+    tmp_path: Path,
+    redis_url: str,
+) -> None:
     project = _project(tmp_path, redis_url)
     show = _cli(project, "config", "show", "--sources")
     assert show.returncode == 0, show.stderr
-    assert 'timeout = "5s"  # file:syntasks.toml' in show.stdout
+    assert "processes = 2  # file:syntasks.toml" in show.stdout
     check = _cli(project, "config", "check")
     assert check.returncode == 0, check.stdout + check.stderr
-    assert "app: e2e (2 tasks)" in check.stdout
+    assert "app: e2e (3 tasks)" in check.stdout
 
     env = {**os.environ, "PYTHONPATH": str(project)}
     worker = subprocess.Popen(
@@ -110,9 +116,42 @@ async def test_worker_and_management_commands(tmp_path: Path, redis_url: str) ->
         assert "default" in queues.stdout
         schedules = _cli(project, "schedules", "list")
         assert "tick" in schedules.stdout and "every 200ms" in schedules.stdout
+        assert "late" in schedules.stdout.splitlines()[0]
+        preview = _cli(project, "schedules", "preview", "tick", "-n", "3")
+        assert preview.returncode == 0, preview.stderr
+        assert len(preview.stdout.strip().splitlines()) == 3
+        runs = _cli(project, "schedules", "runs", "tick")
+        assert "late" in runs.stdout.splitlines()[0]
         paused = _cli(project, "schedules", "pause", "tick")
         assert paused.returncode == 0, paused.stderr
         assert (await app.schedules.get("tick")).state == "paused"
+
+        async def remind(note: str) -> None: ...
+
+        app.schedule(
+            runtime=True,
+            task_name="e2e_app:remind",
+            timeout="5s",
+            retries=0,
+            max_tasks=None,
+        )(remind)
+        for owner, note in (("user:1", "a"), ("user:1", "b"), ("user:2", "c")):
+            await app.schedules.create(
+                "e2e_app:remind",
+                after="1h",
+                kwargs={"note": note},
+                owner=owner,
+                tags=["camp"],
+            )
+        mine = _cli(project, "schedules", "list", "--owner", "user:1", "--json")
+        assert mine.returncode == 0, mine.stderr
+        assert (
+            sorted(item["owner"] for item in json.loads(mine.stdout)) == ["user:1"] * 2
+        )
+        cancelled = _cli(project, "schedules", "cancel", "--owner", "user:1")
+        assert "cancelled 2" in cancelled.stdout, cancelled.stdout + cancelled.stderr
+        left = _cli(project, "schedules", "list", "--tag", "camp", "--json")
+        assert [item["owner"] for item in json.loads(left.stdout)] == ["user:2"]
         await app.redis.close()
     finally:
         sys.path.remove(str(project))
@@ -132,3 +171,43 @@ def test_config_errors_are_clean(tmp_path: Path, args: list[str]) -> None:
     assert result.returncode == 1
     assert "error: Config file" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+BROKEN_APP = """
+from syntasks import SynTasks, SynTasksEvents
+
+app = SynTasks(timeout=None, retries=0, max_tasks=None)
+
+@app.on_event(SynTasksEvents.WORKER_STARTUP)
+async def explode(state) -> None:
+    raise RuntimeError("database is unreachable")
+"""
+
+
+def test_supervisor_stops_after_failed_startups(
+    tmp_path: Path, redis_server: str
+) -> None:
+    (tmp_path / "broken_app.py").write_text(BROKEN_APP)
+    (tmp_path / "syntasks.toml").write_text(
+        textwrap.dedent(
+            f"""
+            [app]
+            name = "broken"
+            app = "broken_app:app"
+
+            [redis]
+            url = "{redis_server}"
+
+            [worker]
+            processes = 1
+            max_startup_failures = 2
+            """,
+        ),
+    )
+    started = time.monotonic()
+    result = _cli(tmp_path, "worker")
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "database is unreachable" in output
+    assert "failed to start 2 times in a row" in output
+    assert time.monotonic() - started < 30

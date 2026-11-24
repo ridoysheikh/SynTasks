@@ -20,3 +20,6 @@ dump.rdb
 
 # Private planning notes and ideas (not published)
 plan/
+
+# Plan execution scratch
+.superpowers/

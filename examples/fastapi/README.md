@@ -14,6 +14,7 @@ uvicorn main:api                # another
 | --- | --- |
 | `POST /reports/{month}` | sends `build_report` and returns its task id at once |
 | `GET /reports/{task_id}` | progress while it runs (`ProgressTracker`), then the result |
+| `WS /ticker/{symbol}` | prices of a symbol: one feed for the whole cluster, however many users and web servers watch it |
 | `WS /rooms/{room}` | a chat room: what you send goes to the room's handler, which numbers it and broadcasts it to everyone connected |
 
 ```bash
@@ -25,6 +26,11 @@ The room handler runs on one worker at a time, wherever it was started.
 Stop that worker and the next message starts it on another one, with the
 count it saved. Every uvicorn process can serve the same room; their readers
 share one Redis connection per process.
+
+The ticker handler opens one (simulated) upstream feed per symbol on one
+worker. Connect with several `websocat ws://localhost:8000/ticker/AAPL` and
+they all get the same prices from the same `by` node; when the last one
+closes, the feed stops after `idle_timeout`.
 
 See [Channels](../../docs/guides/channels.md) and
 [Results and logs](../../docs/guides/results-and-logs.md).

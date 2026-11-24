@@ -15,7 +15,7 @@ from typing import Annotated
 
 from syntasks import Context, Redis, SynTasks, SynTasksDepends, SynTasksEvents, SynTasksState
 
-app = SynTasks()
+app = SynTasks(timeout="1m", retries=0, max_tasks=None)
 
 
 @app.on_event(SynTasksEvents.WORKER_STARTUP)
@@ -154,8 +154,9 @@ re-raise it (that only logs it a second time).
 | `Context` | the message being run, the broker, and `context.state` |
 | `SynTasksState` | the worker's state |
 | `Deadline` | time left before the soft and hard timeouts ([Limits](limits.md)) |
-| `ScheduleInfo` | schedule id, fire time and run number, for runs a schedule fired ([Scheduling](scheduling.md)) |
+| `ScheduleInfo` | schedule id, `scheduled_for`, run number and `late_by`, for runs a schedule fired ([Scheduling](scheduling.md)) |
 | `ProgressTracker[T]` | reports progress ([below](#progress)) |
+| `Emit` | streams partial output to `task.events()` readers ([Results › Live events](results-and-logs.md#live-events)) |
 
 To add your own first-level values (for libraries), call
 `app.add_dependency_context({SomeType: value})`. In tests,

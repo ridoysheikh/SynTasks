@@ -187,6 +187,7 @@ lint.mccabe = { max-complexity = 10 }
 "src/syntasks/cli/*" = [
   "T201",  # CLI commands print
   "C901",  # One branch per sub-command
+  "PLR0911",
   "PLR0912",
   "PLR0915",
 ]
@@ -209,6 +210,17 @@ lint.mccabe = { max-complexity = 10 }
   "PLR2004"  # Magic value
 ]
 "examples/**/*" = [
+  "D103",  # Missing docstring in public function
+  "D101",  # Missing docstring in public class
+  "D102",  # Missing docstring in public method
+  "S311",  # Standard pseudo-random generators
+  "S101",  # use of asserts detected
+  "T201"  # print found
+]
+"test-preview/**/*" = [
+  "E501",  # walkthrough prose
+  "ISC004",  # step texts in tuples
+  "S603",  # the walkthrough runs the shop and syntasks commands
   "D103",  # Missing docstring in public function
   "D101",  # Missing docstring in public class
   "D102",  # Missing docstring in public method

@@ -39,6 +39,8 @@ __all__ = ["Supervisor", "WorkerSpec", "child_main", "configure_logging", "load_
 logger = logging.getLogger("syntasks.supervisor")
 
 _RESTART_BACKOFF = 1.0
+_STARTUP_BACKOFF = 0.5
+_STARTUP_BACKOFF_MAX = 30.0
 _FORCE_AFTER_SIGNALS = 3
 
 
@@ -139,6 +141,19 @@ def load_app(config: Config, app_spec: str | None) -> "SynTasks":
     return app
 
 
+def _load_child_app(spec: WorkerSpec, config: Config, index: int) -> "SynTasks":
+    from syntasks.worker.runtime import EXIT_STARTUP_FAILED  # noqa: PLC0415
+
+    try:
+        app = load_app(config, spec.app)
+        apply_overrides(app.config, spec.overrides)
+        app.reload_options()
+    except Exception:
+        logger.exception("worker-%d failed to load the app.", index)
+        sys.exit(EXIT_STARTUP_FAILED)
+    return app
+
+
 def child_main(spec: WorkerSpec, index: int, processes: int, group: str) -> None:
     """
     Entry point of one worker process.
@@ -148,13 +163,14 @@ def child_main(spec: WorkerSpec, index: int, processes: int, group: str) -> None
     :param processes: number of worker processes.
     :param group: id shared by the processes of one supervisor.
     """
-    from syntasks.worker.runtime import WorkerRuntime  # noqa: PLC0415
+    from syntasks.worker.runtime import (  # noqa: PLC0415
+        EXIT_STARTUP_FAILED,
+        WorkerRuntime,
+    )
 
     config = _load_spec_config(spec)
     configure_logging(config)
-    app = load_app(config, spec.app)
-    apply_overrides(app.config, spec.overrides)
-    app.reload_options()
+    app = _load_child_app(spec, config, index)
     runtime = WorkerRuntime(
         app,
         processes=processes,
@@ -179,7 +195,13 @@ def child_main(spec: WorkerSpec, index: int, processes: int, group: str) -> None
         for sig in (signal.SIGINT, signal.SIGTERM):
             with contextlib.suppress(NotImplementedError, RuntimeError):
                 loop.add_signal_handler(sig, on_signal)
-        await runtime.run(stop)
+        try:
+            await runtime.run(stop)
+        except Exception:
+            if runtime.receiver is not None:
+                raise
+            logger.exception("worker-%d failed to start.", index)
+            sys.exit(EXIT_STARTUP_FAILED)
 
     loop_kind = app.config.worker.loop
     if loop_kind in ("auto", "uvloop"):
@@ -214,6 +236,7 @@ class Supervisor:
         ] * self.processes
         self.restart_at: list[float] = [0.0] * self.processes
         self.crashes = 0
+        self.startup_failures = 0
         self.stopping = threading.Event()
         self.reload_requested = threading.Event()
         self._signals = 0
@@ -316,10 +339,38 @@ class Supervisor:
                 observer.stop()
         return status
 
+    def _handle_startup_failure(self, index: int, now: float) -> int:
+        if self.restart_at[index] == 0.0:
+            self.startup_failures += 1
+            limit = self.config.worker.max_startup_failures
+            if limit and self.startup_failures >= limit:
+                logger.error(
+                    "Workers failed to start %d times in a row; stopping. Fix "
+                    "the error above.",
+                    self.startup_failures,
+                )
+                return 1
+            delay = min(
+                _STARTUP_BACKOFF * 2 ** (self.startup_failures - 1),
+                _STARTUP_BACKOFF_MAX,
+            )
+            logger.error("worker-%d failed to start; retrying in %.1fs.", index, delay)
+            self.restart_at[index] = now + delay
+        if now >= self.restart_at[index]:
+            self.restart_at[index] = 0.0
+            self._start(index)
+        return 0
+
     def _handle_exit(self, index: int, code: int | None) -> int:
-        from syntasks.worker.runtime import EXIT_RECYCLE  # noqa: PLC0415
+        from syntasks.worker.runtime import (  # noqa: PLC0415
+            EXIT_RECYCLE,
+            EXIT_STARTUP_FAILED,
+        )
 
         now = time.monotonic()
+        if code == EXIT_STARTUP_FAILED:
+            return self._handle_startup_failure(index, now)
+        self.startup_failures = 0
         if code in (0, EXIT_RECYCLE):
             logger.info(
                 "worker-%d exited (code %s); starting a fresh one.",

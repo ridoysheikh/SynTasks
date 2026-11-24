@@ -53,8 +53,8 @@ echo "releasing $TAG from $(git rev-parse --short HEAD) on $(git rev-parse --abb
 if [ "$TESTS" = 1 ]; then
   step "Tests"
   uv sync --all-extras
-  uv run ruff check src tests examples
-  uv run ruff format --check src tests examples
+  uv run ruff check src tests examples test-preview
+  uv run ruff format --check src tests examples test-preview
   uv run mypy src tests
   uv run pytest -q -n auto
 fi

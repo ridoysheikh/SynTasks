@@ -162,3 +162,61 @@ async def test_close(app_factory: AppFactory) -> None:
     assert message.kind == "close"
     assert [c.name for c in await app.channels.list()] == []
     await app.channels.close(None)
+
+
+async def test_shared_feed_is_opened_once_for_many_watchers(
+    app_factory: AppFactory,
+) -> None:
+    """The documented "one feed, many watchers" pattern: readers start the handler."""
+    app = app_factory()
+    opened: list[str] = []
+
+    async def pump(ch: Channel, symbol: str) -> None:
+        tick = 0
+        while True:
+            tick += 1
+            await ch.publish({"symbol": symbol, "tick": tick})
+            await ch.sleep(0.05)
+
+    @app.channel("ticker:{symbol}", idle_timeout="1s")
+    async def ticker(ch: Channel, symbol: str) -> None:
+        opened.append(symbol)  # an upstream feed would be opened here
+        feed = asyncio.create_task(pump(ch, symbol))
+        try:
+            async for _ in ch.inbox():
+                pass
+        finally:
+            feed.cancel()
+
+    async def watch(client: SynTasks, symbol: str) -> list[int]:
+        seen: list[int] = []
+        async with client.channels.connect(f"ticker:{symbol}", identity="u") as conn:
+            async for message in conn:
+                if message.kind == "message":
+                    seen.append(message.data["tick"])
+                    if len(seen) == 3:
+                        break
+        return seen
+
+    async with running(app):
+        web_nodes = [app_factory(), app_factory()]  # two "web servers"
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                *(watch(web_nodes[i % 2], "AAPL") for i in range(4)),
+                watch(web_nodes[0], "MSFT"),
+            ),
+            15,
+        )
+        assert sorted(opened) == ["AAPL", "MSFT"]  # 5 watchers, 2 feeds
+        assert all(len(r) == 3 for r in results)
+        assert (await web_nodes[0].channels.info("ticker:AAPL")).owner is not None
+        # Everyone left: the handler stops after idle_timeout, and the feed with it.
+        await wait_until(
+            lambda: _stopped(web_nodes[0], "ticker:AAPL"),
+            timeout=15,
+        )
+    await web_nodes[0].channels.close(None)
+
+
+async def _stopped(app: SynTasks, name: str) -> bool:
+    return (await app.channels.info(name)).owner is None

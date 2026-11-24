@@ -1,6 +1,8 @@
+import os
 import sys
 from collections.abc import Callable, Coroutine
 from copy import copy
+from functools import wraps
 from types import CoroutineType
 from typing import (
     TYPE_CHECKING,
@@ -8,8 +10,10 @@ from typing import (
     Generic,
     ParamSpec,
     TypeVar,
+    get_type_hints,
     overload,
 )
+from uuid import uuid4
 
 from syntasks.kicker import AsyncKicker
 from syntasks.task import AsyncSynTasksTask
@@ -51,6 +55,10 @@ class AsyncSynTasksDecoratedTask(Generic[_FuncParams, _ReturnType]):
         self.original_func = original_func
         self.labels = labels
         self.return_type = return_type
+        # Schedules declared with @app.schedule (registered with the task).
+        self.declared_schedules: list[Any] = []
+        # Limits of runtime copies, if @app.schedule(runtime=...) allows them.
+        self.declared_runtime: Any = None
 
         # This is a hack to make ProcessPoolExecutor work
         # with decorated functions.
@@ -131,21 +139,45 @@ class AsyncSynTasksDecoratedTask(Generic[_FuncParams, _ReturnType]):
         """
         return await self.kicker().kiq(*args, **kwargs)
 
-    async def schedule(self, **options: Any) -> Any:
+    async def schedule(self, timing: Any = None, /, **options: Any) -> Any:
         """
-        Create a dynamic schedule for this task (SynTasks apps only).
+        Create a runtime copy of this schedule (``@app.schedule(runtime=...)``).
 
         Same arguments as :meth:`syntasks.scheduler.ScheduleManager.create`,
-        e.g. ``await check.schedule(every="1s", ttl="2h", kwargs={...})``.
+        e.g. ``await post.schedule(at="2026-12-01T09:00", kwargs={...},
+        owner="user:42")``.
 
+        :param timing: :func:`~syntasks.every`, :func:`~syntasks.calendar`, ...
         :param options: schedule options.
         :raises TypeError: if the task's broker is not a SynTasks app.
         :return: the created schedule.
         """
+        return await self._schedules().create(self.task_name, timing, **options)
+
+    async def call(self, *args: Any, **kwargs: Any) -> Any:
+        """
+        Send a call and wait for its value (request / reply).
+
+        See :meth:`~syntasks.kicker.AsyncKicker.call`.
+
+        :param args: arguments.
+        :param kwargs: keyword arguments.
+        :return: the task's return value.
+        """
+        return await self.kicker().call(*args, **kwargs)
+
+    @property
+    def schedules(self) -> Any:
+        """The runtime copies of this schedule (list, update, cancel)."""
+        from syntasks.scheduler.runtime import TemplateSchedules  # noqa: PLC0415
+
+        return TemplateSchedules(self._schedules(), self.task_name)
+
+    def _schedules(self) -> Any:
         schedules = getattr(self.broker, "schedules", None)
         if schedules is None:
             raise TypeError("Schedules need a SynTasks app as the broker.")
-        return await schedules.create(self.task_name, **options)
+        return schedules
 
     def kicker(self) -> AsyncKicker[_FuncParams, _ReturnType]:
         """
@@ -165,3 +197,53 @@ class AsyncSynTasksDecoratedTask(Generic[_FuncParams, _ReturnType]):
 
     def __repr__(self) -> str:
         return f"AsyncSynTasksDecoratedTask({self.task_name})"
+
+
+def default_task_name(func: Callable[..., Any]) -> str:
+    """
+    The name a task gets when none is given: ``module:function``.
+
+    :param func: task function.
+    :return: name.
+    """
+    fmodule = func.__module__
+    if fmodule == "__main__":  # pragma: no cover
+        fmodule = ".".join(
+            os.path.normpath(sys.argv[0]).removesuffix(".py").split(os.path.sep),
+        )
+    fname = func.__name__
+    if fname == "<lambda>":
+        fname = f"lambda_{uuid4().hex}"
+    return f"{fmodule}:{fname}"
+
+
+def build_decorated_task(
+    broker: Any,
+    func: Callable[..., Any],
+    task_name: str | None,
+    labels: dict[str, Any],
+    decorator_class: type[
+        AsyncSynTasksDecoratedTask[Any, Any]
+    ] = AsyncSynTasksDecoratedTask,
+) -> AsyncSynTasksDecoratedTask[Any, Any]:
+    """
+    Wrap a function in a decorated task (without registering it).
+
+    :param broker: broker the task sends through (or a stand-in).
+    :param func: task function.
+    :param task_name: name, or None for :func:`default_task_name`.
+    :param labels: labels of every message.
+    :param decorator_class: class of the result.
+    :return: decorated task.
+    """
+    name = task_name or default_task_name(func)
+    return_type = get_type_hints(func).get("return")
+    return wraps(func)(  # type: ignore[return-value]
+        decorator_class(
+            broker=broker,
+            original_func=func,
+            labels=labels,
+            task_name=name,
+            return_type=return_type,
+        ),
+    )

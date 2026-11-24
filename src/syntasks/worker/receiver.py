@@ -18,6 +18,7 @@ import contextlib
 import contextvars
 import functools
 import inspect
+import json
 import logging
 import time
 import traceback
@@ -66,6 +67,25 @@ class RunningTask:
     started: float
     runner: asyncio.Task[Any] | None = None
     cancel_requested: bool = False
+
+
+def _final_event(result: SynTasksResult[Any], retried: bool) -> tuple[str, Any]:
+    """The event that ends an attempt: retrying, succeeded, failed, cancelled."""
+    error = result.error
+    if retried:
+        return "retrying", {"error": None if error is None else str(error)}
+    if not result.is_err:
+        value = result.return_value
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError):
+            value = None
+        return "succeeded", {"return_value": value}
+    kind = "cancelled" if isinstance(error, TaskCancelledError) else "failed"
+    return kind, {
+        "error": None if error is None else str(error) or repr(error),
+        "error_type": None if error is None else type(error).__name__,
+    }
 
 
 class AppReceiver(Receiver):
@@ -151,7 +171,7 @@ class AppReceiver(Receiver):
         )
         ack.is_acked = True
 
-    async def _process(  # noqa: C901, PLR0912, PLR0915
+    async def _process(  # noqa: C901, PLR0911, PLR0912, PLR0915
         self,
         message: bytes | AckableMessage,
         delivery: Delivery | None,
@@ -161,7 +181,7 @@ class AppReceiver(Receiver):
             message.ack if isinstance(message, AckableMessage) else None,
         )
         data = message.data if isinstance(message, AckableMessage) else message
-        queue = delivery.queue if delivery else self.app.config.defaults.queue
+        queue = delivery.queue if delivery else "default"
         try:
             msg = self.app.formatter.loads(message=data)
             msg.parse_labels()
@@ -202,11 +222,29 @@ class AppReceiver(Receiver):
             await ack.ack()
             return
 
-        if delivery is not None and options.concurrency_key:
+        if (
+            delivery is not None
+            and msg.labels.get("_batch")
+            and not await self.app.completion.batch_gate(delivery, msg)
+        ):
+            return
+
+        if delivery is not None and options.rate_per_key is not None and options.key:
+            call = {"args": msg.args, "kwargs": msg.kwargs}
+            rate_key = self.app.engine.key_of(msg.task_name, options, call)
+            if rate_key is not None and not await self.app.engine.rate_key(
+                delivery,
+                options,
+                rate_key,
+            ):
+                logger.debug("Task %s deferred by its key's rate.", msg.task_id)
+                return
+
+        if delivery is not None and options.key and options.max_tasks_per_key:
             try:
                 key = key_text(
                     extract_argument(
-                        options.concurrency_key,
+                        options.key,
                         task.original_func,
                         msg.args,
                         msg.kwargs,
@@ -214,10 +252,10 @@ class AppReceiver(Receiver):
                 )
             except (KeyError, IndexError, ValueError, TypeError):
                 logger.warning(
-                    "Task %s: concurrency_key %r not found in the call; running "
+                    "Task %s: key %r not found in the call; running "
                     "without a key slot.",
                     msg.task_name,
-                    options.concurrency_key,
+                    options.key,
                 )
             else:
                 if not await self.app.engine.acquire_key(delivery, options, key):
@@ -250,11 +288,23 @@ class AppReceiver(Receiver):
         if ack_time == AcknowledgeType.WHEN_RECEIVED and ack.is_ackable:
             await ack.ack()
 
-        result = await self.run_task(
-            target=task.original_func,
-            message=msg,
-            ack_controller=ack,
-        )
+        events = self.app.events if options.events else None
+        if events is not None:
+            events.active.add(msg.task_id)
+            await events.publish(
+                msg.task_id,
+                "started",
+                {"attempt": int(msg.labels.get("_attempt", 0))},
+            )
+        try:
+            result = await self.run_task(
+                target=task.original_func,
+                message=msg,
+                ack_controller=ack,
+            )
+        finally:
+            if events is not None:
+                events.active.discard(msg.task_id)
 
         if delivery is not None:
             # The run is over: let the next one start while we store the result.
@@ -263,6 +313,8 @@ class AppReceiver(Receiver):
         retried = False
         if result.is_err and not isinstance(result.error, _NO_RETRY):
             retried = await self._maybe_retry(msg, options)
+        if events is not None:
+            await events.publish(msg.task_id, *_final_event(result, retried))
 
         if ack_time == AcknowledgeType.WHEN_EXECUTED and ack.is_ackable:
             await ack.ack()
@@ -273,10 +325,13 @@ class AppReceiver(Receiver):
         if not retried:
             try:
                 if options.store_result and not isinstance(result.error, NoResultError):
+                    ttl = options.result_ttl
+                    if msg.labels.get("_result_ttl") not in (None, ""):
+                        ttl = float(msg.labels["_result_ttl"])
                     await self.app.result_backend.store(
                         msg.task_id,
                         result,
-                        ttl=options.result_ttl,
+                        ttl=ttl,
                         max_size=options.max_result,
                     )
                     for middleware in reversed(self.app.middlewares):
@@ -307,6 +362,10 @@ class AppReceiver(Receiver):
                 )
             if self.app.schedules is not None and msg.labels.get("_schedule"):
                 await self.app.schedules.record_run(msg, result)
+            try:
+                await self.app.completion.after_run(msg, result, options)
+            except Exception:
+                logger.exception("Can't send the callbacks of %s.", msg.task_id)
 
         if (ack_time == AcknowledgeType.WHEN_SAVED and ack.is_ackable) or (
             ack_time == AcknowledgeType.MANUAL and retried and ack.is_ackable

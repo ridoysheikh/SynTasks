@@ -27,10 +27,11 @@ end
 """ % (WAKE_KEEP - 1)
 
 # KEYS: 1 target stream, 2 queue streams set, 3 queue index, 4 wake list,
-#       5 unique key, 6 delayed zset
+#       5 unique (or throttle) key, 6 delayed zset, 7 fair list of the key,
+#       8 fair rotation list, 9 fair active set
 # ARGV: 2 data, 3 task, 4 queue, 5 max_length|'', 6 on_full,
 #       7 unique ttl ms|'', 8 task id, 9 delay ms|'', 10 group, 11 wake '1'|'',
-#       12 delayed member prefix (32 chars)
+#       12 delayed member prefix (32 chars), 13 fair key|
 KICK = Script(
     "queue_kick",
     _HELPERS
@@ -58,6 +59,12 @@ if ARGV[9] ~= '' then
     .. string.format('%04d', #ARGV[3]) .. ARGV[3] .. ARGV[2]
   redis.call('ZADD', KEYS[6], now_ms() + tonumber(ARGV[9]), member)
   return {'delayed', ''}
+end
+if ARGV[13] ~= '' then
+  redis.call('RPUSH', KEYS[7], ARGV[2])
+  if redis.call('SADD', KEYS[9], ARGV[13]) == 1 then redis.call('RPUSH', KEYS[8], ARGV[13]) end
+  if ARGV[11] == '1' then wake(KEYS[4]) end
+  return {'ok', ''}
 end
 local id
 if ARGV[5] ~= '' and ARGV[6] == 'drop_oldest' then
@@ -98,6 +105,93 @@ local head = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
 local next_due = ''
 if head[2] then next_due = head[2] end
 return {#due, next_due}
+""",
+)
+
+# Feed a fair task's stream from its per-key lists, one key at a time in
+# rotation, so the stream never holds more than ``max`` undelivered entries.
+# KEYS: 1 rotation list, 2 active set, 3 task stream
+# ARGV: 2 list key prefix (…:fair:<task>:k:), 3 group, 4 task, 5 max undelivered
+# Returns the number of entries fed.
+FAIR_FEED = Script(
+    "queue_fair_feed",
+    _HELPERS
+    + """
+ensure_group(KEYS[3], ARGV[3])
+local pending = redis.call('XPENDING', KEYS[3], ARGV[3])[1]
+local undelivered = redis.call('XLEN', KEYS[3]) - pending
+local fed = 0
+while undelivered < tonumber(ARGV[5]) do
+  local key = redis.call('LPOP', KEYS[1])
+  if not key then break end
+  local data = redis.call('LPOP', ARGV[2] .. key)
+  if data then
+    redis.call('XADD', KEYS[3], '*', 'data', data, 'task', ARGV[4])
+    undelivered = undelivered + 1
+    fed = fed + 1
+  end
+  if redis.call('LLEN', ARGV[2] .. key) > 0 then
+    redis.call('RPUSH', KEYS[1], key)
+  else
+    redis.call('SREM', KEYS[2], key)
+  end
+end
+return fed
+""",
+)
+
+# Debounce: replace a key's waiting message with a newer one and push its
+# time back.
+# KEYS: 1 delayed zset, 2 debounce key (per task and key), 3 queue index,
+#       4 queue streams set, 5 target stream
+# ARGV: 2 new delayed member, 3 delay ms, 4 task id, 5 queue, 6 group
+# Returns {'new'} or {'replaced', old task id}.
+DEBOUNCE = Script(
+    "queue_debounce",
+    _HELPERS
+    + """
+local status = {'new'}
+local old = redis.call('GET', KEYS[2])
+if old then
+  local sep = string.find(old, '|', 1, true)
+  local old_task, old_member = string.sub(old, 1, sep - 1), string.sub(old, sep + 1)
+  if redis.call('ZREM', KEYS[1], old_member) == 1 then status = {'replaced', old_task} end
+end
+redis.call('SADD', KEYS[3], ARGV[5])
+if redis.call('SADD', KEYS[4], KEYS[5]) == 1 or redis.call('EXISTS', KEYS[5]) == 0 then
+  ensure_group(KEYS[5], ARGV[6])
+end
+redis.call('ZADD', KEYS[1], now_ms() + tonumber(ARGV[3]), ARGV[2])
+redis.call('SET', KEYS[2], ARGV[4] .. '|' .. ARGV[2], 'PX', tonumber(ARGV[3]) + 60000)
+return status
+""",
+)
+
+# Per-key rate limit of a taken message: run it now, or put it back as a
+# delayed message for when its key's rate allows (other keys don't wait).
+# KEYS: 1 rate key (per task and key), 2 delayed zset, 3 stream
+# ARGV: 2 emission ms, 3 burst, 4 group, 5 entry id, 6 delayed member
+# Returns {'ok'} or {'deferred', wait ms}.
+RATE_DEFER = Script(
+    "queue_rate_defer",
+    """
+local now = now_ms()
+local emission = tonumber(ARGV[2])
+local tolerance = emission * tonumber(ARGV[3])
+local tat = tonumber(redis.call('GET', KEYS[1]) or now)
+if tat < now then tat = now end
+local new_tat = tat + emission
+local allow_at = new_tat - tolerance
+if allow_at <= now then
+  redis.call('SET', KEYS[1], tostring(new_tat), 'PX', math.ceil(new_tat - now) + 1000)
+  return {'ok'}
+end
+-- Not charged now: the message is checked again when it comes back.
+local wait = math.ceil(allow_at - now)
+redis.call('ZADD', KEYS[2], now + wait, ARGV[6])
+redis.call('XACK', KEYS[3], ARGV[4], ARGV[5])
+redis.call('XDEL', KEYS[3], ARGV[5])
+return {'deferred', tostring(wait)}
 """,
 )
 

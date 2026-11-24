@@ -11,11 +11,9 @@ from syntasks.config.schema import (
     QueueConfig,
     RedisConfig,
     ResultsConfig,
-    ScheduleConfig,
     SchedulerConfig,
     SentinelConfig,
     TaskConfig,
-    TaskDefaults,
     WorkerConfig,
 )
 
@@ -29,11 +27,9 @@ __all__ = [
     "QueueConfig",
     "RedisConfig",
     "ResultsConfig",
-    "ScheduleConfig",
     "SchedulerConfig",
     "SentinelConfig",
     "TaskConfig",
-    "TaskDefaults",
     "WorkerConfig",
     "build",
     "dump_config",

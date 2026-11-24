@@ -211,10 +211,27 @@ def load_config(
     for dotted_key, value in (overrides or {}).items():
         _set_dotted(raw, dotted_key.split("."), value)
         sources[dotted_key] = "cli"
+    _reject_code_sections(raw)
     config = build(Config, raw)
     config.path = str(file_path) if file_path else None
     config.sources = sources
     return config
+
+
+_CODE_SECTIONS = {
+    "defaults": "task options are set in code: SynTasks(...), Module(...) or "
+    "@app.task(...)",
+    "tasks": "task options are set in code: SynTasks(...), Module(...) or "
+    "@app.task(...)",
+    "queues": "queues are declared in code: app.queue(name, ...)",
+    "schedules": "schedules are declared in code: @app.schedule(...)",
+}
+
+
+def _reject_code_sections(raw: Mapping[str, Any]) -> None:
+    for section, where in _CODE_SECTIONS.items():
+        if section in raw:
+            raise ConfigError(detail=f"[{section}] isn't a config section; {where}.")
 
 
 def _describe(hint: Any) -> str:  # noqa: PLR0911

@@ -110,6 +110,13 @@ class ResultIsMissingError(ResultGetError):
     task_id: str
 
 
+class TaskSupersededError(SynTasksError):
+    """A debounced call was replaced by a later one before it ran."""
+
+    __template__ = "Replaced by a later call ({task_id}) before it ran (debounce)."
+    task_id: str
+
+
 class QueueFullError(SendTaskError):
     """The queue reached its ``max_length``."""
 

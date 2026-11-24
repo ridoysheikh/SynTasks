@@ -8,113 +8,153 @@ timeouts.
 ## Declared schedules
 
 ```python
-from syntasks import cron, every
+from syntasks import calendar, cron, every
 
-@app.task(schedule=every("10s"))
+
+@app.schedule(every("10s"), timeout="5s", retries=0, max_tasks=1)
 async def poll_prices() -> None: ...
 
 
-@app.task(schedule=[
-    cron("0 30 9 * * mon-fri", tz="Europe/London", id="open"),  # 6 fields: with seconds
-    every("10m", id="incremental", kwargs={"full": False}),
-])
+@app.schedule(
+    [
+        calendar(weekday="mon-fri", at="09:30", tz="Europe/London", id="open"),
+        every("10m", id="incremental", kwargs={"full": False}),
+    ],
+    timeout="10m",
+    retries=2,
+    max_tasks=1,
+)
 async def sync_rates(full: bool = True) -> None: ...
 ```
 
-or in config:
+`@app.schedule(timing, ...)` (also on every [module](modules.md)) makes
+the function a task with the required limits, and declares its schedules.
+The function can still be sent by hand (`.kiq()`). A schedule's id is the
+task name, or `<task>:<n>` when there are several timings, unless you
+give `id=`.
 
-```toml
-[schedules.nightly-report]
-task = "billing.tasks:report"
-cron = "0 0 2 * * *"
-tz = "UTC"
-kwargs = { format = "pdf" }
-timeout = "20m"
-```
-
-Every worker syncs the declared schedules into Redis when it starts:
-new ones are added, changed ones updated (a paused schedule stays paused,
-counters are kept), removed ones deleted (`scheduler.prune_removed`). Set
-`[app] revision` (e.g. your build number) so that during a rolling deploy
-an old worker can't bring back schedules the new code removed.
+Every worker syncs the declared schedules into Redis when it starts: new
+ones are added, changed ones updated (a paused schedule stays paused,
+counters are kept), removed ones deleted (`[scheduler] prune_removed`).
+Set `[app] revision` (e.g. your build number) so that during a rolling
+deploy an old worker can't bring back schedules the new code removed.
 
 Declared schedules can be paused, resumed and triggered at runtime, but
-not changed or deleted through the API: change the code or the file.
+not changed or deleted through the API: change the code. To let your
+users create schedules, see [Runtime schedules](runtime-schedules.md).
 
-## When they fire
+## Timings
 
-| Recurrence | Example | Notes |
+| Timing | Example | Fires |
 |---|---|---|
 | `every(interval)` | `every("1s")`, `every("250ms")` | aligned to the Unix epoch (or `anchor=`), so fires don't drift across restarts |
-| `cron(expr, tz=)` | `cron("*/5 * * * * *")` | 5 fields, or 6 with seconds first; time zones with correct DST handling |
+| `every(interval, weekday=, between=)` | `every("15m", weekday="mon-fri", between=("09:00", "18:00"))` | only on those days, inside that daily window |
+| `cron(expr, tz=)` | `cron("0 9 * * mon#1")`, `cron("*/5 * * * * *")` | 5 fields, or 6 with seconds first; `L` (last day), `fri#2`, `fri#L` |
+| `calendar(...)` | below | weekdays, nth weekdays, days of the month, months, times of day |
 | `at(when)` | `at("2026-12-01T09:00Z")` | once |
-| `after(delay)` | dynamic schedules only | once, after a delay |
 
-Fires reach the queue within tens of milliseconds of their due time.
-
-## Dynamic schedules
-
-Programs create, change and delete schedules while running:
+### Calendar rules
 
 ```python
-schedule = await app.schedules.create(
-    check_price,                         # task or task name
-    kwargs={"symbol": "AAPL", "above": 250},
-    every="1s",
-    ttl="2h",                            # or expires_at=, end_at=, max_runs=
-    id="alert:user42:AAPL",              # optional
-    if_exists="replace",                 # error | replace | ignore
-)
-await check_price.schedule(every="5s", kwargs={...})   # shortcut
-
-await app.schedules.get(schedule.id)
-async for s in app.schedules.list(task="alerts:check_price", state="active"): ...
-await app.schedules.update(schedule.id, every="5s", version=schedule.version)
-await app.schedules.pause(schedule.id)
-await app.schedules.resume(schedule.id)
-await app.schedules.trigger(schedule.id)       # run now, timing unchanged
-await app.schedules.runs(schedule.id)          # recent runs
-await app.schedules.cancel_running(schedule.id)
-await app.schedules.delete(schedule.id)
+calendar(weekday="sun", at="09:00")                          # 09:00 every Sunday
+calendar(weekday="mon", nth=1, at="09:00")                   # first Monday of each month
+calendar(weekday="fri", nth=-1, at="17:30")                  # last Friday
+calendar(day=1, at="00:05")                                  # the 1st of the month
+calendar(day=-1, at="23:00")                                 # last day of the month
+calendar(weekday="mon-fri", at=["09:00", "13:00"])           # weekdays, twice
+calendar(month="dec", day=25, at="08:00")                    # once a year
+calendar(weekday="mon-fri", at="09:00", exclude=["2026-12-25", "2027-01-01"])
+calendar(week=2, weekday="tue", at="10:00", anchor="2026-01-06")  # every 2nd Tuesday
 ```
 
-- Arguments must be JSON, at most `scheduler.max_payload` (16 KiB), and
-  are checked against the task's signature when the schedule is created.
-- `update(..., version=)` fails with `ScheduleConflictError` if someone
-  changed the schedule since you read it.
-- `scheduler.min_interval` (1 s) is the shortest allowed interval for
-  dynamic schedules; `scheduler.max_dynamic` caps how many exist.
-- Expired and finished dynamic schedules are deleted by the cleanup job.
+| Field | Values |
+|---|---|
+| `at` | `"HH:MM"` or `"HH:MM:SS"`, or a list |
+| `weekday` | `"mon"`, `"mon-fri"`, `"sat,sun"`, `["mon", "wed"]`; ranges wrap (`"fri-mon"`) |
+| `nth` | which weekday of the month: `1`-`5`, or `-1` for the last (with `weekday`) |
+| `day` | days of the month, `1`-`31`; negative counts from the end (`-1` is the last day) |
+| `month` | `"jan"`-`"dec"`, `"jan-mar"`, or `1`-`12` |
+| `week`, `anchor` | every N weeks, counted from the week of `anchor` (default 1970-01-05) |
+| `exclude` | dates to skip, `"YYYY-MM-DD"` |
+| `tz` | IANA time zone, default UTC |
+
+- **Every filter you give must match.** `day=13, weekday="fri"` is Friday
+  the 13th (cron would fire on every 13th *and* every Friday).
+- **Wall-clock times in `tz`.** A time skipped when clocks go forward
+  fires at the first valid instant after it; a time repeated when clocks
+  go back fires once, the first time.
+- **Checked when declared.** A rule that never fires (`month="feb",
+  day=30`) is an error.
+- **Preview:** `syntasks schedules preview ID -n 10`, or
+  `schedule.spec.next_times(10)` in code.
+
+## Missed fires run as soon as possible
+
+A fire is **missed** when the cluster was down or behind: a newer fire
+time has passed too, or it is dispatched later than
+`[scheduler] late_after` (30 s). The dispatcher checks every round, not
+only at start, so a missed fire runs as soon as any worker is back.
+
+| `misfire` | After downtime |
+|---|---|
+| `"once"` (default) | run once now, then continue on the normal times |
+| `"all"` | run every missed time, up to `max_catchup` (`[scheduler] max_catchup`, 10) |
+| `"skip"` | run none; wait for the next time |
+
+`misfire_grace` (per schedule, default unlimited) drops missed times
+older than it, whatever the policy: set it for things that are useless
+late, like "remind 5 minutes before the meeting". Runtime schedules
+follow the same rules: a one-shot `at` whose time passed while everything
+was down fires when a dispatcher sees it.
+
+The run can tell: `ScheduleInfo.scheduled_for` and `late_by` (seconds).
+`syntasks schedules runs ID` shows each run's lateness, and
+`syntasks schedules list` shows schedules that are overdue now.
 
 ## Policies
 
 | Option | Values | Meaning |
 |---|---|---|
-| `misfire` | `once` (default), `skip`, `all` | fires missed while the cluster was down: run one now, none, or each (up to `max_catchup`) |
-| `misfire_grace` | duration | how late a fire may be and still count as on time |
+| `misfire`, `misfire_grace`, `max_catchup` | see above | missed fires |
 | `overlap` | `skip` (default), `allow`, `queue` | when the previous run is still going: drop this one, run both, or wait (`max_instances`) |
 | `jitter` | duration | random delay added to each fire |
 | `start_at`, `end_at` | time | window in which it fires |
-| `max_runs`, `ttl`, `expires_at` | | end of a dynamic schedule |
-| `timeout`, `retries` | | override the task's for these runs |
-| `queue`, `priority`, `labels` | | routing of the fired messages |
+| `max_runs` | int | stop after N runs |
 | `pause_after_failures` | int | pause the schedule after N failures in a row |
+| `paused` | bool | declare it paused |
 
 ## In the task
 
 ```python
+from typing import Annotated
+
 from syntasks import Depends, ScheduleInfo
 
-@app.task(schedule=every("1m"))
-async def report(info: ScheduleInfo = Depends()) -> None:
-    info.schedule_id, info.fire_time, info.run_number, info.late_by
+
+@app.schedule(every("1m"), timeout="30s", retries=0, max_tasks=1)
+async def report(info: Annotated[ScheduleInfo, Depends()]) -> None:
+    info.schedule_id, info.scheduled_for, info.run_number, info.late_by
 ```
+
+## Operating schedules
+
+```python
+await app.schedules.get(schedule_id)
+async for s in app.schedules.list(task="billing.tasks:report"): ...
+await app.schedules.pause(schedule_id)          # kept across deploys
+await app.schedules.resume(schedule_id)
+await app.schedules.trigger(schedule_id)        # run now, timing unchanged
+await app.schedules.runs(schedule_id)           # recent runs with late_by
+await app.schedules.cancel_running(schedule_id)
+```
+
+Or `syntasks schedules list|show|preview|pause|resume|trigger|runs`.
 
 ## How it works
 
 The worker holding the dispatcher lease sleeps until the next due time,
-claims due schedules in one script, computes their next fire, and
-commits the task messages and the new due time in a second script. If the
+claims due schedules in one script, computes their next fire, and commits
+the task messages and the new due time in a second script. If the
 dispatcher dies between the two, the claim expires and the next
-dispatcher sends the same fire with the same task id: late, but never lost
-and never twice. See [Cluster](cluster.md).
+dispatcher sends the same fire with the same task id: late, but never
+lost and never twice. See [Cluster](cluster.md).

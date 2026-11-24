@@ -3,13 +3,17 @@ When a schedule fires.
 
 * :func:`every` - fixed interval with millisecond resolution, aligned to an
   anchor (default: the Unix epoch, so ``every("10s")`` fires at :00, :10,
-  :20 … on every machine and after every restart);
-* :func:`cron` - cron expression, 5 fields or 6 with seconds, in a time zone;
+  :20 … on every machine and after every restart); with ``weekday=`` /
+  ``between=`` only on those days and in that daily window;
+* :func:`cron` - cron expression, 5 fields or 6 with seconds, in a time zone
+  (with the Quartz extras ``L`` and ``#``);
+* :func:`calendar` - weekdays, nth weekdays, days of the month, months and
+  times of day (see :mod:`syntasks.scheduler.calendar`);
 * :func:`at` - once, at a given time;
 * :func:`after` - once, after a delay from creation.
 
-These functions build *declarations* used with ``@app.task(schedule=...)``;
-they also accept the run options (``id``, ``args``, ``kwargs``, policies).
+These functions build *declarations* used with ``@app.schedule(...)``; they
+also accept the run options (``id``, ``args``, ``kwargs``, policies).
 """
 
 import datetime as dt
@@ -29,6 +33,7 @@ __all__ = [
     "ScheduleDecl",
     "after",
     "at",
+    "calendar",
     "cron",
     "every",
     "parse_time_ms",
@@ -219,12 +224,16 @@ def recurrence_from_dict(data: dict[str, Any]) -> Recurrence:
         return Cron(str(data["expression"]), data.get("tz"))
     if kind == "at":
         return At(int(data["when_ms"]))
+    if kind == "calendar":
+        from syntasks.scheduler.calendar import CalendarRule  # noqa: PLC0415
+
+        return CalendarRule.from_dict(data)
     raise ValueError(f"Unknown recurrence kind: {kind!r}")
 
 
 @dataclass(kw_only=True)
 class ScheduleDecl:
-    """A schedule declared next to its task (``@app.task(schedule=...)``)."""
+    """A timing with its run options (from :func:`every`, :func:`cron`, ...)."""
 
     recurrence: Recurrence | None = None
     after_ms: int | None = None
@@ -253,10 +262,15 @@ def _decl(
     )
 
 
+_CALENDAR_FILTERS = ("month", "day", "weekday", "nth", "week", "exclude")
+
+
 def every(
     interval: Any,
     *,
     anchor: Any = None,
+    between: tuple[Any, Any] | None = None,
+    tz: str | None = None,
     id: str | None = None,
     args: Any = None,
     kwargs: Any = None,
@@ -265,22 +279,90 @@ def every(
     """
     Fire every ``interval`` (``"1s"``, ``"250ms"``, ``"5m"``, seconds, timedelta).
 
+    With any of ``between``, ``weekday``, ``day``, ``nth``, ``month``,
+    ``week`` or ``exclude`` it fires only inside that daily window and on
+    those dates, in ``tz``: ``every("15m", weekday="mon-fri",
+    between=("09:00", "18:00"))``.
+
     :param interval: interval.
     :param anchor: time the fires align to (default: the Unix epoch).
-    :param id: schedule id (default ``<task>:<n>``).
+    :param between: ``(start, end)`` local times of a daily window.
+    :param tz: time zone of the window and dates (default UTC).
+    :param id: schedule id.
     :param args: task arguments.
     :param kwargs: task keyword arguments.
-    :param options: policies (``misfire``, ``overlap``, ``timeout``, ...).
+    :param options: date filters, then policies (``misfire``, ``overlap``, ...).
     :return: declaration.
     """
-    anchor_ms = 0 if anchor is None else parse_time_ms(anchor)
-    return _decl(
-        Every(parse_duration_ms(interval), anchor_ms),
-        id=id,
-        args=args,
-        kwargs=kwargs,
-        options=options,
+    interval_ms = parse_duration_ms(interval)
+    filters = {name: options.pop(name) for name in _CALENDAR_FILTERS if name in options}
+    recurrence: Recurrence
+    if filters or between is not None or tz is not None:
+        from syntasks.scheduler.calendar import windowed_every  # noqa: PLC0415
+
+        if anchor is not None:
+            raise ValueError("anchor can't be combined with a window or date filters.")
+        recurrence = windowed_every(interval_ms, between=between, tz=tz, **filters)
+    else:
+        anchor_ms = 0 if anchor is None else parse_time_ms(anchor)
+        recurrence = Every(interval_ms, anchor_ms)
+    return _decl(recurrence, id=id, args=args, kwargs=kwargs, options=options)
+
+
+def calendar(
+    *,
+    at: Any = "00:00",
+    month: Any = None,
+    day: Any = None,
+    weekday: Any = None,
+    nth: Any = None,
+    week: int = 1,
+    anchor: Any = None,
+    exclude: Any = None,
+    tz: str | None = None,
+    id: str | None = None,
+    args: Any = None,
+    kwargs: Any = None,
+    **options: Any,
+) -> ScheduleDecl:
+    """
+    Fire on calendar dates at times of day.
+
+    ``calendar(weekday="sun", at="09:00")``, ``calendar(weekday="mon",
+    nth=1, at="09:00")`` (first Monday), ``calendar(day=-1, at="23:00")``
+    (last day of the month), ``calendar(month="dec", day=25, at="08:00")``.
+    Every filter given must match. See :mod:`syntasks.scheduler.calendar`.
+
+    :param at: time or times of day, ``"HH:MM[:SS]"``.
+    :param month: months (names, ``"jan-mar"``, 1-12).
+    :param day: days of the month; negative counts from the end.
+    :param weekday: weekdays (``"mon"``, ``"mon-fri"``, ``"sat,sun"``).
+    :param nth: which weekday of the month (1-5, or -1 for the last).
+    :param week: every N weeks, counted from ``anchor``.
+    :param anchor: a date in the first week for ``week`` (default 1970-01-05).
+    :param exclude: dates to skip (``"YYYY-MM-DD"`` or dates).
+    :param tz: IANA time zone (default UTC).
+    :param id: schedule id.
+    :param args: task arguments.
+    :param kwargs: task keyword arguments.
+    :param options: policies.
+    :raises ValueError: if a value is invalid or the rule never fires.
+    :return: declaration.
+    """
+    from syntasks.scheduler.calendar import calendar_rule  # noqa: PLC0415
+
+    rule = calendar_rule(
+        at=at,
+        month=month,
+        day=day,
+        weekday=weekday,
+        nth=nth,
+        week=week,
+        anchor=anchor,
+        exclude=exclude,
+        tz=tz,
     )
+    return _decl(rule, id=id, args=args, kwargs=kwargs, options=options)
 
 
 def cron(

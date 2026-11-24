@@ -28,10 +28,12 @@ class AsyncSynTasksTask(Generic[_ReturnType]):
         task_id: str,
         result_backend: "AsyncResultBackend[_ReturnType]",
         return_type: type[_ReturnType] | None = None,
+        task_name: str | None = None,
     ) -> None:
         self.task_id = task_id
         self.result_backend = result_backend
         self.return_type = return_type
+        self.task_name = task_name
 
     async def is_ready(self) -> bool:
         """
@@ -64,7 +66,7 @@ class AsyncSynTasksTask(Generic[_ReturnType]):
                 self.task_id,
                 with_logs=with_logs,
             )
-            if self.return_type is not None:
+            if self.return_type is not None and not res.is_err:
                 try:
                     res.return_value = convert(
                         res.return_value,
@@ -124,6 +126,48 @@ class AsyncSynTasksTask(Generic[_ReturnType]):
         if watcher is None:
             raise TypeError("This result backend can't stream progress.")
         return watcher(self.task_id, timeout=timeout)
+
+    async def events(self, timeout: float | None = None) -> Any:
+        """
+        The task's events as they happen (``events=True`` tasks).
+
+        Replays what the channel still keeps, then follows it until the
+        task succeeds, fails or is cancelled.
+
+        :param timeout: seconds to wait in total (None: no limit).
+        :raises ValueError: if the task doesn't publish events.
+        :raises TimeoutError: if it doesn't finish in time.
+        :yield: :class:`~syntasks.ChannelMessage` with ``kind`` and ``data``.
+        """
+        from syntasks.results.events import TERMINAL, channel_name  # noqa: PLC0415
+
+        app = getattr(self.result_backend, "app", None)
+        if app is None:
+            raise ValueError("Task events need a SynTasks app.")
+        options = app.options_for(self.task_name) if self.task_name else None
+        if options is not None and not options.events:
+            raise ValueError(
+                f"{self.task_name} doesn't publish events; set events=True."
+            )
+        loop = asyncio.get_running_loop()
+        deadline = None if timeout is None else loop.time() + timeout
+        async with app.channels.connect(
+            channel_name(self.task_id),
+            last_id="0",
+            presence=False,
+        ) as connection:
+            while True:
+                left = None if deadline is None else deadline - loop.time()
+                if left is not None and left <= 0:
+                    raise TimeoutError(f"No end event of {self.task_id} in time.")
+                event = await connection.receive(timeout=left)
+                if event is None:
+                    raise TimeoutError(f"No end event of {self.task_id} in time.")
+                if event.kind == "gap":  # replaying from the start, not a loss
+                    continue
+                yield event
+                if event.kind in TERMINAL:
+                    return
 
     async def get_progress(self) -> "TaskProgress[Any] | None":
         """

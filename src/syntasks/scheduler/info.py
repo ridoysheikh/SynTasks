@@ -14,9 +14,9 @@ class ScheduleInfo:
 
     ``schedule_id`` is None when the run was not started by a schedule::
 
-        @app.task(schedule=every("10s"))
-        async def poll(info: ScheduleInfo = Depends()) -> None:
-            print(info.schedule_id, info.fire_time, info.run_number)
+        @app.schedule(every("10s"))
+        async def poll(info: Annotated[ScheduleInfo, Depends()]) -> None:
+            print(info.schedule_id, info.scheduled_for, info.late_by)
     """
 
     schedule_id: str | None = None
@@ -35,8 +35,17 @@ class ScheduleInfo:
         return self.attempt > 0
 
     @property
+    def scheduled_for(self) -> dt.datetime | None:
+        """The fire time this run was planned for (same as ``fire_time``)."""
+        return self.fire_time
+
+    @property
     def late_by(self) -> float:
-        """Seconds between the planned fire time and now."""
+        """
+        Seconds between the planned fire time and now.
+
+        Large after downtime: a missed fire runs as soon as it's noticed.
+        """
         if self.fire_time is None:
             return 0.0
         return (dt.datetime.now(dt.UTC) - self.fire_time).total_seconds()

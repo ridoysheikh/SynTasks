@@ -111,6 +111,52 @@ def _parse_field(text: str, spec: _Field) -> frozenset[int]:
     return frozenset(values)
 
 
+def _last_day(day: dt.date) -> int:
+    following = (day.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+    return (following - dt.timedelta(days=1)).day
+
+
+def _split_extras(
+    days_text: str,
+    weekdays_text: str,
+) -> tuple[str, bool, str, frozenset[tuple[int, int]]]:
+    """
+    Take the Quartz extras out of the day fields.
+
+    ``L`` in day-of-month is the last day; ``fri#2`` / ``5#2`` is the second
+    Friday; ``fri#L``, ``friL`` and ``5L`` are the last Friday.
+
+    :return: (plain day field, last day?, plain weekday field, (weekday, n) pairs).
+    """
+    day_parts = days_text.split(",")
+    last_day = "L" in (part.upper() for part in day_parts)
+    plain_days = ",".join(p for p in day_parts if p.upper() != "L")
+    nth: set[tuple[int, int]] = set()
+    plain_weekdays = []
+    for part in weekdays_text.split(","):
+        upper = part.upper()
+        base, which = None, None
+        if "#" in part:
+            base, which = part.split("#", 1)
+        elif len(part) > 1 and upper.endswith("L"):
+            base, which = part[:-1], "L"
+        if base is None:
+            plain_weekdays.append(part)
+            continue
+        if which is None or not (
+            which.upper() == "L" or which in {"1", "2", "3", "4", "5"}
+        ):
+            raise ValueError(f"Invalid cron item {part!r}: after '#' use 1-5 or L.")
+        weekday = _value(base, _FIELDS[4]) % 7
+        nth.add((weekday, -1 if which.upper() == "L" else int(which)))
+    return (
+        plain_days or ("" if last_day else days_text),
+        last_day,
+        ",".join(plain_weekdays),
+        frozenset(nth),
+    )
+
+
 @dataclass(frozen=True)
 class CronExpression:
     """A parsed cron expression."""
@@ -124,6 +170,8 @@ class CronExpression:
     weekdays_restricted: bool
     seconds: frozenset[int] = frozenset({0})
     has_seconds: bool = False
+    last_day: bool = False
+    nth_weekdays: frozenset[tuple[int, int]] = frozenset()
 
     @classmethod
     def parse(cls, expression: str) -> "CronExpression":
@@ -146,8 +194,11 @@ class CronExpression:
                 "Cron expression must have 5 fields (or 6 with seconds), "
                 f"got {len(text.split())}: {expression!r}",
             )
-        minutes, hours, days, months, weekdays = (
-            _parse_field(part, spec) for part, spec in zip(parts, _FIELDS, strict=True)
+        days_text, last_day, weekdays_text, nth = _split_extras(parts[2], parts[4])
+        minutes, hours, months = (_parse_field(parts[i], _FIELDS[i]) for i in (0, 1, 3))
+        days = _parse_field(days_text, _FIELDS[2]) if days_text else frozenset()
+        weekdays = (
+            _parse_field(weekdays_text, _FIELDS[4]) if weekdays_text else frozenset()
         )
         # Normalize Sunday: 7 -> 0.
         if 7 in weekdays:
@@ -162,6 +213,8 @@ class CronExpression:
             weekdays_restricted=not parts[4].startswith("*"),
             seconds=seconds,
             has_seconds=has_seconds,
+            last_day=last_day,
+            nth_weekdays=nth,
         )
 
     def matches(self, moment: datetime) -> bool:
@@ -182,15 +235,17 @@ class CronExpression:
             or moment.month not in self.months
         ):
             return False
-        day_ok = moment.day in self.days
-        weekday_ok = moment.isoweekday() % 7 in self.weekdays
-        if self.days_restricted and self.weekdays_restricted:
-            return day_ok or weekday_ok
-        return day_ok and weekday_ok
+        return self._day_ok(moment.date())
 
     def _day_ok(self, day: dt.date) -> bool:
-        day_ok = day.day in self.days
-        weekday_ok = day.isoweekday() % 7 in self.weekdays
+        last = _last_day(day)
+        day_ok = day.day in self.days or (self.last_day and day.day == last)
+        weekday = day.isoweekday() % 7
+        weekday_ok = weekday in self.weekdays or any(
+            weekday == wanted
+            and ((day.day - 1) // 7 + 1 == n if n > 0 else day.day > last - 7)
+            for wanted, n in self.nth_weekdays
+        )
         if self.days_restricted and self.weekdays_restricted:
             return day_ok or weekday_ok
         return day_ok and weekday_ok

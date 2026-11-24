@@ -38,7 +38,11 @@ question and stays short. Find what you want to do below and follow the link.
 
 | …do this | Read |
 | --- | --- |
+| split a big app into files and folders, and set limits once per module | [Modules](guides/modules.md) |
 | declare tasks and send them | [Tasks](guides/tasks.md) |
+| send a call and wait for its value | [Tasks › Sending](guides/tasks.md#sending) (`call()`) |
+| run something after a task, or after a whole group | [Callbacks and batches](guides/callbacks-and-batches.md) |
+| run a campaign of thousands of sends you can pause and cancel | [Callbacks and batches › Batches](guides/callbacks-and-batches.md#batches-campaigns) |
 | retry failed runs, or make a task unique for a while | [Tasks › Retries](guides/tasks.md#retries), [Tasks › Unique tasks](guides/tasks.md#unique-tasks) |
 | wait for results, send a group, report progress | [Results and logs](guides/results-and-logs.md) |
 | keep the logs a task prints | [Results and logs › Log capture](guides/results-and-logs.md#log-capture) |
@@ -50,13 +54,15 @@ question and stays short. Find what you want to do below and follow the link.
 
 | …do this | Read |
 | --- | --- |
-| configure Redis, workers and tasks in `syntasks.toml` | [Configuration](guides/configuration.md) |
+| configure Redis and workers in `syntasks.toml` | [Configuration](guides/configuration.md) |
 | use a different config per environment | [Configuration › Profiles](guides/configuration.md#profiles) |
 | split work into queues, with priorities | [Queues](guides/queues.md) |
 | run one task per customer at a time, in order | [Queues › Ordering per key](guides/queues.md#ordering-per-key) |
+| stop one tenant's backlog from starving the others | [Queues › Per-key flow control](guides/queues.md#per-key-flow-control) (`fair`) |
+| collapse bursts of calls into one (debounce), or drop repeats (throttle) | [Queues › Per-key flow control](guides/queues.md#per-key-flow-control) |
 | inspect, pause, purge or replay a queue | [Queues › Operations](guides/queues.md#operations) |
 | limit how many run at once, on a machine or across all of them | [Limits](guides/limits.md) |
-| rate-limit calls to a partner API | [Limits › Cluster-wide concurrency and rate limits](guides/limits.md#cluster-wide-concurrency-and-rate-limits) |
+| rate-limit calls to a partner API, or per account | [Limits › Cluster-wide concurrency and rate limits](guides/limits.md#cluster-wide-concurrency-and-rate-limits), [Per key](guides/limits.md#per-key) |
 | stop runs that take too long or use too much memory | [Limits › Time limits](guides/limits.md#time-limits), [Process isolation](guides/limits.md#process-isolation) |
 | know what happens when a machine dies, or during a deploy | [Cluster](guides/cluster.md) |
 
@@ -64,10 +70,10 @@ question and stays short. Find what you want to do below and follow the link.
 
 | …do this | Read |
 | --- | --- |
-| run a task every 10 seconds, or on cron | [Scheduling › Declared schedules](guides/scheduling.md#declared-schedules) |
-| create, change and delete schedules at runtime | [Scheduling › Dynamic schedules](guides/scheduling.md#dynamic-schedules) |
-| decide what happens after downtime, or when runs overlap | [Scheduling › Policies](guides/scheduling.md#policies) |
-| run a task once, later | [Tasks › Sending](guides/tasks.md#sending) (`with_delay`), or `after("90s")` in [Scheduling](guides/scheduling.md) |
+| run a task every 10 seconds, on cron, or "first Monday at 09:00" | [Scheduling](guides/scheduling.md) |
+| let users schedule posts or emails, listed by owner, without a database table | [Runtime schedules](guides/runtime-schedules.md) |
+| decide what happens after downtime, or when runs overlap | [Scheduling › Missed fires](guides/scheduling.md#missed-fires-run-as-soon-as-possible), [Policies](guides/scheduling.md#policies) |
+| run a task once, later | [Tasks › Sending](guides/tasks.md#sending) (`with_delay`) |
 
 ### Keep something running
 
@@ -75,6 +81,8 @@ question and stays short. Find what you want to do below and follow the link.
 | --- | --- |
 | push updates to many readers (websocket rooms, live feeds) | [Channels › Publishing and reading](guides/channels.md#publishing-and-reading) |
 | keep one stateful loop alive per room, game or device | [Channels › Handlers](guides/channels.md#handlers) |
+| check who may join a channel, and see who is there | [Channels › Authorization](guides/channels.md#authorization), [Presence](guides/channels.md#presence) |
+| stream a task's progress or output (AI tokens) to a browser | [Results › Live events](guides/results-and-logs.md#live-events) |
 
 ### Look something up
 

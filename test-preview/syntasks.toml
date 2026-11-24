@@ -1,0 +1,30 @@
+# Infrastructure only: tasks, schedules, channels and their limits are in shop/.
+# Every setting: ../docs/reference/config.md
+[app]
+name = "shop"                 # key prefix in Redis
+app = "shop.app:app"          # where `syntasks worker` finds the app
+revision = 1                  # bump on deploy: older workers adopt newer limits
+
+[redis]
+url = "${SHOP_REDIS_URL:-redis://127.0.0.1:55460/0}"
+
+[worker]
+processes = 2
+max_async_tasks = 50          # per machine, split across its processes
+
+# Short timings so the walkthrough shows a takeover in seconds, not minutes.
+[node]
+heartbeat = "1s"
+dead_after = "4s"
+
+[scheduler]
+lease_ttl = "3s"
+max_sleep = "200ms"
+
+[channels]
+lease_ttl = "3s"
+
+# `syntasks worker --profile big`
+[profiles.big.worker]
+processes = 4
+max_async_tasks = 200

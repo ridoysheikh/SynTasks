@@ -2,7 +2,7 @@ import logging
 
 from syntasks import SynTasks, every
 
-app = SynTasks()  # reads syntasks.toml
+app = SynTasks(timeout="5m", retries=0, max_tasks=None)  # + syntasks.toml
 logger = logging.getLogger(__name__)
 
 
@@ -11,6 +11,6 @@ async def add(a: int, b: int) -> int:
     return a + b
 
 
-@app.task(schedule=every("10s"))
+@app.schedule(every("10s"))
 async def heartbeat() -> None:
     logger.info("still here")

@@ -2,7 +2,7 @@
 
 ```bash
 uv sync --all-extras                      # dev environment, with every extra
-uv run ruff check src tests examples && uv run ruff format --check src tests examples
+uv run ruff check src tests examples test-preview && uv run ruff format --check src tests examples test-preview
 uv run mypy src tests
 uv run pytest -q -n auto
 ```
@@ -33,7 +33,12 @@ With neither, the Redis tests are skipped and the rest still run.
 | `tests/cluster/` | Lua primitives: leases, semaphores, rate limits, node registry, clock |
 | `tests/app/test_queues.py` | routing, priorities, delays, retries, dead letters, dedupe, every kind of limit, timeouts, cancelling, isolation, memory, takeover of abandoned messages, log capture |
 | `tests/app/test_scheduler.py` | static sync, dynamic CRUD, TTLs, exactly-once fires across workers, recovery of half-done fires, misfire and overlap |
-| `tests/scheduler/` | cron parsing and next times, including DST changes |
+| `tests/scheduler/` | cron (with `L` / `#`) and calendar rules, checked against a brute-force walk of two years in five time zones, DST included |
+| `tests/app/test_modules.py`, `test_code_config.py` | modules, `extends`, required limits, code-only config, the limits manifest |
+| `tests/app/test_runtime_schedules.py` | templates, owners, tags, paging, caps, bulk operations, orphans |
+| `tests/app/test_flow_control.py` | `fair`, `debounce`, `throttle`, `rate_per_key` |
+| `tests/app/test_completion.py` | callbacks, group fan-in, `call`, batches |
+| `tests/app/test_events_and_presence.py` | task events and `Emit`; channel limits, `authorize`, presence |
 | `tests/app/test_channels.py` | broadcast, handlers, takeover after a crash, shared consumers |
 | `tests/app/test_results.py` | push-based results, groups, progress |
 | `tests/cli/test_cli_e2e.py` | a real `syntasks worker` with two processes, driven through the CLI |
@@ -49,6 +54,9 @@ uv run python -c "from syntasks.config.dump import config_reference; open('docs/
 
 CI (`.github/workflows/ci.yml`) runs lint and mypy, the suite on Python
 3.11–3.14, and checks that the wheel installs with no other packages.
+
+Before a release, also run `test-preview/walkthrough.py`: it drives every
+feature on two real worker supervisors and kills one of them.
 
 ## Contributing
 
