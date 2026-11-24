@@ -444,6 +444,16 @@ class ChannelsConfig:
     presence_ttl: float = setting(30.0, unit="duration", doc="Reader presence timeout.")
     hub_max_streams: int = setting(500, doc="Channels per hub connection.")
     reader_buffer: int = setting(1000, doc="Messages buffered per reader.")
+    max_per_watch: int = setting(
+        500,
+        doc="Distinct channels one watch (one connection) may subscribe to.",
+    )
+    watch_keep: float = setting(
+        30 * 86400.0,
+        unit="duration",
+        doc="How long a user's saved groups are kept; renewed on every change.",
+        scope="cluster",
+    )
 
 
 @dataclass(kw_only=True)

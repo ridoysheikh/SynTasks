@@ -13,6 +13,8 @@ from syntasks.brokers.multi_broker import MultiBroker
 from syntasks.brokers.shared_broker import async_shared_broker
 from syntasks.channels import Channel, ChannelMessage
 from syntasks.channels.channel import ChannelDenied, ConnectRequest, Presence
+from syntasks.channels.feeds import Feed
+from syntasks.channels.watch import Update, Watch, WatchError
 from syntasks.config import Config, ConfigError, load_config
 from syntasks.context import Context
 from syntasks.dependencies import Depends
@@ -96,6 +98,7 @@ __all__ = [
     "Depends",
     "DuplicateTaskError",
     "Emit",
+    "Feed",
     "GroupOutcome",
     "InMemoryBroker",
     "Module",
@@ -138,6 +141,9 @@ __all__ = [
     "TaskOutcome",
     "TaskSupersededError",
     "TaskTimeoutError",
+    "Update",
+    "Watch",
+    "WatchError",
     "__version__",
     "after",
     "async_shared_broker",

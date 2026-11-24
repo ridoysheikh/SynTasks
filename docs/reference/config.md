@@ -97,6 +97,8 @@ Scope: **node** settings describe one machine; **cluster** settings must be the 
 | `presence_ttl` | duration | `"30s"` | node | Reader presence timeout. |
 | `hub_max_streams` | int | `500` | node | Channels per hub connection. |
 | `reader_buffer` | int | `1000` | node | Messages buffered per reader. |
+| `max_per_watch` | int | `500` | node | Distinct channels one watch (one connection) may subscribe to. |
+| `watch_keep` | duration | `"30d"` | cluster | How long a user's saved groups are kept; renewed on every change. |
 
 ## `[results]`
 

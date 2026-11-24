@@ -315,6 +315,68 @@ class Declarations:
 
         return wrap
 
+    def feed(
+        self,
+        kind: str,
+        *,
+        every: Any = None,
+        linger: Any = "30s",
+        keep_last: Any = "7d",
+        shards: int = 1,
+        concurrency: int = 20,
+        normalize: Callable[[str], str] | None = None,
+        **limits: Any,
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """
+        Declare a feed: one shared data source per kind.
+
+        See :mod:`syntasks.channels.feeds`.
+
+        With ``every`` the function is ``async def fetch(key)`` and is called
+        for every watched key each interval (return None for "nothing new").
+        Without it, it is ``async def run(feed: Feed)``: one upstream stream
+        for the whole kind. Users watch ``"kind:key"`` channels through
+        ``app.feeds.watch(...)``.
+
+        A feed is a channel handler, so ``timeout``, ``retries`` and
+        ``max_tasks`` (at least ``shards``) are required, from here or above.
+
+        :param kind: feed name.
+        :param every: poll interval of a polled feed.
+        :param linger: how long it runs after the last watcher leaves.
+        :param keep_last: how long a key's last value is kept.
+        :param shards: handlers to spread the keys over.
+        :param concurrency: parallel fetches per round.
+        :param normalize: canonical form of a key, e.g. ``str.upper``.
+        :param limits: ``timeout``, ``retries``, ``max_tasks``.
+        :return: decorator.
+        """
+        from syntasks.channels.feeds import build_spec  # noqa: PLC0415
+
+        def wrap(func: Callable[..., Any]) -> Callable[..., Any]:
+            spec = build_spec(
+                kind,
+                func,
+                every=every,
+                linger=linger,
+                keep_last=keep_last,
+                shards=shards,
+                concurrency=concurrency,
+                normalize=normalize,
+            )
+
+            async def handler(ch: Any, shard: str) -> None:
+                await ch.manager.app.feeds.run(spec, ch, int(shard))
+
+            self._declare_channel(
+                spec.pattern,
+                handler,
+                {**limits, "feed": spec, "idle_timeout": None},
+            )
+            return func
+
+        return wrap
+
     def extends(self, *modules: "Module | str") -> None:
         """
         Attach modules: their declarations join this one, under its options.

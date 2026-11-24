@@ -156,6 +156,7 @@ class SynTasks(Declarations, AsyncBroker):  # type: ignore[misc]
     def _setup_features(self) -> None:
         """Attach schedules, channels, logs and task control."""
         from syntasks.channels import ChannelManager  # noqa: PLC0415
+        from syntasks.channels.feeds import FeedManager  # noqa: PLC0415
         from syntasks.logs import LogManager  # noqa: PLC0415
         from syntasks.results.completion import Completion  # noqa: PLC0415
         from syntasks.results.events import TaskEvents  # noqa: PLC0415
@@ -166,6 +167,7 @@ class SynTasks(Declarations, AsyncBroker):  # type: ignore[misc]
         self.events = TaskEvents(self)
         self.schedules = ScheduleManager(self)
         self.channels = ChannelManager(self)
+        self.feeds = FeedManager(self)
         self.logs = LogManager(self)
         self.tasks = TaskControl(self)
 
@@ -235,9 +237,17 @@ class SynTasks(Declarations, AsyncBroker):  # type: ignore[misc]
         chain: list[OptionLayer],
     ) -> None:
         """Register a channel handler declared here or in an attached module."""
+        feed = options.pop("feed", None)
         limits = {k: options.pop(k) for k in list(options) if k in REQUIRED}
         layer = parse_layer(f"channel {pattern}", limits)
         resolved = resolve_chain([*chain, layer], what=f"channel {pattern}")
+        if feed is not None:
+            if resolved.max_tasks is not None and resolved.max_tasks < feed.shards:
+                raise ConfigError(
+                    detail=f"Feed {feed.kind!r} has {feed.shards} shards but "
+                    f"max_tasks={resolved.max_tasks}; every shard is a handler.",
+                )
+            self.feeds.declare(feed)
         self.channels.handler(
             pattern,
             max_lifetime=resolved.timeout,

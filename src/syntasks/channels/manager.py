@@ -69,6 +69,23 @@ return {'ok', id}
 )
 
 
+# Ask for a channel's handler to be started, if it isn't running.
+# KEYS: 1 owner, 2 activating, 3 activate stream, 4 meta; ARGV: 2 name
+# (ARGV[1] belongs to the script prelude.)
+_WAKE = Script(
+    "channel_wake",
+    """
+if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+if redis.call('HGET', KEYS[4], 'failed') == '1' then return 0 end
+if redis.call('SET', KEYS[2], '1', 'NX', 'PX', 2000) then
+  redis.call('XADD', KEYS[3], 'MAXLEN', '~', 10000, '*', 'name', ARGV[2], 'hops', '0')
+  return 1
+end
+return 0
+""",
+)
+
+
 def _id_tuple(entry_id: str) -> tuple[int, int]:
     ms, _, seq = entry_id.partition("-")
     return int(ms or 0), int(seq or 0)
@@ -535,7 +552,8 @@ class ChannelManager:
 
     # -- sending -----------------------------------------------------------
 
-    def _encode(self, name: str, data: Any) -> bytes:
+    def encode(self, name: str, data: Any) -> bytes:
+        """Encode a message of a channel, bounded by ``[channels] max_message``."""
         return dumps_bounded(
             data,
             max_bytes=self.app.config.channels.max_message,
@@ -572,7 +590,7 @@ class ChannelManager:
             self.app.redis,
             [self.key(name, "out"), self._active_key, self.key(name, "owner")],
             [
-                self._encode(name, data),
+                self.encode(name, data),
                 sender or "",
                 kind,
                 config.max_length,
@@ -620,7 +638,7 @@ class ChannelManager:
                 self.key(name, "meta"),
             ],
             [
-                self._encode(name, data),
+                self.encode(name, data),
                 sender or "",
                 kind,
                 self.app.config.channels.inbox_max,
@@ -632,6 +650,26 @@ class ChannelManager:
         if reply[0] == b"full":
             raise ChannelFullError(name=name)
         return reply[1].decode()
+
+    async def wake(self, name: str) -> bool:
+        """
+        Start a channel's handler if no worker is running it.
+
+        :param name: channel name.
+        :return: True if a start was requested.
+        """
+        return bool(
+            await _WAKE(
+                self.app.redis,
+                [
+                    self.key(name, "owner"),
+                    self.key(name, "activating"),
+                    self._activate_key,
+                    self.key(name, "meta"),
+                ],
+                [name],
+            ),
+        )
 
     async def ensure_inbox(self, name: str) -> None:
         """
@@ -1048,6 +1086,9 @@ class ChannelManager:
             if slot is not None:
                 await slot.release(self._slot_holder(name))
             return
+        # The request has been served: from here the owner key tells that it runs.
+        with contextlib.suppress(RedisError, OSError):
+            await self.app.redis.delete(self.key(name, "activating"))
         self.hosted[name] = asyncio.create_task(
             self._run(spec, name, params, lease, slot),
         )
