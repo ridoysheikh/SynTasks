@@ -39,7 +39,9 @@ syntasks worker [APP] [options]
 
 Starts `worker.processes` worker processes and supervises them (restarts
 after a crash or a recycle, stops gracefully on `SIGTERM`/`SIGINT`,
-restarts them all on `SIGHUP`). `APP` defaults to `[app] app`. Flags
+restarts them all on `SIGHUP`). A process that fails before it is ready
+is retried with a growing delay; after `worker.max_startup_failures` in a
+row the command exits with an error. `APP` defaults to `[app] app`. Flags
 override the config file.
 
 | Option | Meaning |
@@ -58,7 +60,7 @@ See [Cluster](../guides/cluster.md) for what each process does.
 
 | Command | Does |
 | --- | --- |
-| `syntasks config check` | validates the file, imports the app and checks its tasks and schedules; exits 1 on a problem |
+| `syntasks config check` | validates the file, imports the app and checks every task, schedule and channel (required limits included); exits 1 on a problem |
 | `syntasks config show` | prints the effective config as TOML |
 | `  --sources` | with the source of each value (default, file, profile, env, CLI) |
 
@@ -81,14 +83,17 @@ See [Queues](../guides/queues.md).
 
 | Command | Does |
 | --- | --- |
-| `syntasks schedules list` | every schedule with its next fire time and state |
+| `syntasks schedules list` | every schedule: next fire time, how late it is now, state, runs |
 | `  --task NAME` | only this task's |
-| `  --source code\|config\|api` | only those declared in code, in the config file, or created at runtime |
+| `  --source code\|api` | only those declared in code, or created at runtime |
+| `  --owner O`, `--tag T`, `--template NAME` | runtime schedules of an owner, with a tag, or copies of a template |
 | `syntasks schedules show ID` | one schedule in full |
+| `syntasks schedules preview ID [-n N]` | its next N fire times |
 | `syntasks schedules pause ID` / `resume ID` | stop / restart firing; kept across deploys |
 | `syntasks schedules trigger ID` | run its task now, without changing its timing |
-| `syntasks schedules delete ID` | delete a dynamic schedule (static ones are removed from code or config) |
-| `syntasks schedules runs ID [-n N]` | recent runs: fire time, task id, status, duration |
+| `syntasks schedules delete ID` | delete a runtime schedule (declared ones are removed from code) |
+| `syntasks schedules cancel [ID] [--owner O] [--tag T] [--template NAME]` | delete one runtime schedule, or all that match |
+| `syntasks schedules runs ID [-n N]` | recent runs: fire time, task id, status, duration, lateness |
 
 See [Scheduling](../guides/scheduling.md).
 

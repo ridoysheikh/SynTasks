@@ -47,8 +47,13 @@ Redis's. Machine clock drift doesn't matter.
 ## Deploys
 
 - Set `[app] revision` to a number that grows with each deploy. Workers
-  publish cluster-scope settings and sync declared schedules with it; an
-  older revision never overrides a newer one.
+  publish the limits their code declares and sync declared schedules with
+  it; an older revision never overrides a newer one, and uses the newer
+  limits for the tasks it also has.
+- A worker that can't start (the app doesn't import, a startup handler
+  raises) exits with code 78; the supervisor retries with a growing delay
+  and stops after `[worker] max_startup_failures` (5) in a row, so a
+  broken deploy fails loudly instead of restarting forever.
 - Rolling restarts are safe: running tasks finish within
   `worker.shutdown_grace`, messages a process took but didn't start are
   put back, and anything a dead process held is taken over.

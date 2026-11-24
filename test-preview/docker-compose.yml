@@ -1,0 +1,13 @@
+# Redis for the preview, if redis-server isn't installed.
+#   docker compose up -d --wait
+#   SHOP_REDIS_URL=redis://127.0.0.1:55460/0 ../.venv/bin/python walkthrough.py
+#   docker compose down -v
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["127.0.0.1:55460:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      retries: 30

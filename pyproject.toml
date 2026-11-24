@@ -219,6 +219,8 @@ lint.mccabe = { max-complexity = 10 }
 ]
 "test-preview/**/*" = [
   "E501",  # walkthrough prose
+  "ISC004",  # step texts in tuples
+  "S603",  # the walkthrough runs the shop and syntasks commands
   "D103",  # Missing docstring in public function
   "D101",  # Missing docstring in public class
   "D102",  # Missing docstring in public method

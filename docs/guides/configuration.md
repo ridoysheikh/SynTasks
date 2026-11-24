@@ -1,7 +1,25 @@
 # Configuration
 
-All settings live in one TOML file. The [reference](../reference/config.md)
-lists every setting with its type, default and scope.
+`syntasks.toml` holds **infrastructure only**: where Redis is, how many
+worker processes a machine runs, timings of nodes, the scheduler and
+channels, results and logging. Everything about tasks, schedules, channels
+and queues is declared in code ([Modules](modules.md)). The
+[reference](../reference/config.md) lists every setting with its type,
+default and scope.
+
+```toml
+[app]
+name = "billing"           # namespace in Redis
+app = "billing.app:app"    # where workers find the app
+revision = 42              # your build number (see Cluster)
+
+[redis]
+url = "${REDIS_URL:-redis://localhost:6379/0}"
+
+[worker]
+processes = 4
+max_async_tasks = 200      # per machine, split across its processes
+```
 
 ## Where it's read from
 
@@ -13,18 +31,8 @@ lists every setting with its type, default and scope.
 
 ## Precedence
 
-From lowest to highest:
-
-1. library defaults
-2. `[defaults]` (options every task starts from)
-3. arguments in code, e.g. `@app.task(timeout="30s")`
-4. `[tasks."module:function"]`
-5. the selected profile
-6. environment variables
-7. CLI flags
-
-Operations settings beat code: a timeout in the file overrides the one in
-the decorator, so you can tune a deployment without changing code.
+From lowest to highest: library defaults, the file, the selected
+profile, environment variables, CLI flags.
 
 ## Environment variables
 
@@ -60,25 +68,29 @@ Select with `--profile production` or `SYNTASKS_PROFILE=production`.
 | size | `"512"`, `"64KiB"`, `"10MB"`, `"2GiB"` |
 | rate | `"100/s"`, `"5/m"`, `"10/30s"` |
 
+The same units work in code: `@app.task(timeout="30s", max_payload="64KiB", rate="100/s")`.
+
 Unknown keys are errors with a suggestion
-(`worker.max_async_task: unknown setting. Did you mean 'max_async_tasks'?`).
+(`worker.max_async_task: unknown setting. Did you mean 'max_async_tasks'?`),
+and so are the sections that belong in code:
+
+```text
+[tasks] isn't a config section; task options are set in code: SynTasks(...), Module(...) or @app.task(...).
+```
 
 ## Node scope and cluster scope
 
-With many machines, some settings describe **this machine** (node scope:
-`[worker]`, memory limits, `channels.max_handlers`), and some must be
-**the same everywhere** (cluster scope: `[defaults]`, `[tasks.*]`,
-`[queues.*]`, `[scheduler]`).
-
-On start, every worker publishes its cluster-scope settings to Redis with
-`[app] revision`. A worker with an older revision (an old deploy that
-restarted late) adopts the stored settings instead and logs a warning, so
-two machines never enforce different global limits. Set `revision` to
-your build number in CI; without it, the last machine to start wins.
+Some settings describe **this machine** (node scope: `[worker]`,
+`channels.max_handlers`), and some must be **the same everywhere**
+(cluster scope: most of `[scheduler]`). On start, every worker publishes
+its cluster-scope settings and the limits its code declares, with
+`[app] revision`; a worker with an older revision adopts the stored ones
+and logs a warning. See [Modules › Every machine enforces the same
+limits](modules.md#every-machine-enforces-the-same-limits).
 
 ## Inspecting
 
 ```bash
-syntasks config check            # validate the file and the app's tasks
+syntasks config check            # validate the file, import the app, check every declaration
 syntasks config show --sources   # effective config, with where each value came from
 ```

@@ -15,15 +15,23 @@ machines.
   ownership and node membership live in Redis. Every machine runs the same
   `syntasks worker`; jobs that need a single owner move by lease when a
   machine dies.
-- **Scheduling in the library.** Second-level schedules declared next to
-  tasks or created at runtime with full CRUD, fired once across the cluster.
+- **Code first, for big apps.** Tasks, schedules, channels and queues are
+  declared in code, split into modules that pass their limits down.
+  `timeout`, `retries` and `max_tasks` are required, so nothing runs
+  unbounded by accident.
+- **Scheduling in the library.** Every N seconds, cron, or calendar rules
+  ("first Monday at 09:00"); missed fires run as soon as the cluster is
+  back. Schedules your users create at runtime, listed by owner, replace a
+  table and its CRUD.
 - **Limits that hold.** Per machine, per task across the cluster, per key,
-  rate limits, soft/hard timeouts with grace, memory limits, process
+  rate limits (also per key), fair sharing between tenants, debounce and
+  throttle, soft/hard timeouts with grace, memory limits, process
   isolation.
-- **Channels.** Broadcast streams with replay, and long-running handlers kept
-  alive once per channel (websocket rooms, stateful loops).
-- **One config file.** `syntasks.toml`, with environment overrides and
-  profiles.
+- **Workflows.** Callbacks, fan-in when a group is done, request/reply,
+  and campaigns you can pause, cancel and watch.
+- **Realtime.** Live task events and streamed output; channels with
+  replay, authorization, presence and long-running handlers kept alive
+  once per channel.
 
 > **Status:** early development. APIs may change until the first stable
 > release.
@@ -46,19 +54,23 @@ pip install "syntasks @ https://github.com/ridoysheikh/syntasks/releases/downloa
 
 ```python
 # app.py
-from syntasks import SynTasks, every
+from syntasks import SynTasks, calendar, every
 
-app = SynTasks()  # reads syntasks.toml
+app = SynTasks(timeout="5m", retries=0, max_tasks=None)  # + syntasks.toml
 
 
-@app.task(timeout="30s", retries=3)
+@app.task(timeout="30s", retries=3, max_tasks=20)
 async def add(a: int, b: int) -> int:
     return a + b
 
 
-@app.task(schedule=every("10s"))
+@app.schedule(every("10s"))
 async def heartbeat() -> None:
     print("still here")
+
+
+@app.schedule(calendar(weekday="mon", nth=1, at="09:00", tz="Asia/Dhaka"))
+async def monthly_report() -> None: ...
 ```
 
 ```toml
@@ -94,9 +106,9 @@ Short pages, one question each. Start at **[docs/](docs/README.md)**.
 | | |
 | --- | --- |
 | [Install](docs/getting-started/install.md) · [Quickstart](docs/getting-started/quickstart.md) | get going |
-| [Tasks](docs/guides/tasks.md) · [Results and logs](docs/guides/results-and-logs.md) · [Dependencies](docs/guides/dependencies.md) | write tasks |
+| [Modules](docs/guides/modules.md) · [Tasks](docs/guides/tasks.md) · [Results and logs](docs/guides/results-and-logs.md) · [Callbacks and batches](docs/guides/callbacks-and-batches.md) · [Dependencies](docs/guides/dependencies.md) | write tasks |
 | [Configuration](docs/guides/configuration.md) · [Queues](docs/guides/queues.md) · [Limits](docs/guides/limits.md) · [Cluster](docs/guides/cluster.md) | run them in production |
-| [Scheduling](docs/guides/scheduling.md) · [Channels](docs/guides/channels.md) | on time, and long-running |
+| [Scheduling](docs/guides/scheduling.md) · [Runtime schedules](docs/guides/runtime-schedules.md) · [Channels](docs/guides/channels.md) | on time, for users, and long-running |
 | [Config](docs/reference/config.md) · [CLI](docs/reference/cli.md) · [Python API](docs/reference/python-api.md) | reference |
 
 ## Optional extras

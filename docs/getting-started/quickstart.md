@@ -7,19 +7,27 @@ From zero to tasks running on workers in five minutes. You need SynTasks
 
 ```python
 # billing/app.py
-from syntasks import SynTasks
+from syntasks import SynTasks, every
 
-app = SynTasks()
+app = SynTasks(timeout="5m", retries=0, max_tasks=None)
 
 
-@app.task(timeout="30s")
+@app.task(timeout="30s", retries=3)
 async def add(a: int, b: int) -> int:
     return a + b
+
+
+@app.schedule(every("10s"))
+async def heartbeat() -> None:
+    print("still here")
 ```
 
-`SynTasks()` reads `syntasks.toml` from the current directory (or
-`[tool.syntasks]` in `pyproject.toml`). Without a file it uses defaults:
-Redis on `localhost:6379`, one queue called `default`.
+`SynTasks(...)` reads `syntasks.toml` from the current directory (or
+`[tool.syntasks]` in `pyproject.toml`); without a file it uses Redis on
+`localhost:6379`. Its keyword arguments are the limits every task starts
+from. `timeout`, `retries` and `max_tasks` are required on every task,
+so setting them here once is the usual start (`None` = unbounded). In a
+bigger app, split tasks into [modules](../guides/modules.md).
 
 ## Configure
 
@@ -37,8 +45,9 @@ processes = 4
 max_async_tasks = 200
 ```
 
-Check it with `syntasks config check`. Every setting is described in the
-[configuration reference](../reference/config.md).
+The file holds infrastructure only; tasks, schedules and their limits are
+in code. Check both with `syntasks config check`. Every setting is
+described in the [configuration reference](../reference/config.md).
 
 ## Run workers
 
@@ -76,6 +85,7 @@ workers), try [`test-preview/`](../../test-preview/README.md).
 
 ## Next
 
+- [Modules](../guides/modules.md): split a big app, inherit limits.
 - [Tasks](../guides/tasks.md): options, retries, routing.
 - [Scheduling](../guides/scheduling.md): run tasks every N seconds, on cron, once.
 - [Limits](../guides/limits.md): concurrency, rate limits, timeouts, memory.

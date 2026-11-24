@@ -31,21 +31,33 @@ async with app.channels.connect("news", last_id=resume_from) as conn:
 ```python
 from syntasks import Channel
 
-@app.channel("room:{room_id}", idle_timeout="10m")
+
+@app.channel("room:{room_id}", timeout=None, retries=5, max_tasks=1000, idle_timeout="10m")
 async def room(ch: Channel, room_id: str) -> None:
     async for msg in ch.inbox():
         if msg.kind == "join":
-            await ch.publish({"joined": msg.sender})
+            await ch.publish({"joined": msg.data["identity"]})
             continue
         ch.state["count"] = ch.state.get("count", 0) + 1
         await ch.publish({"from": msg.sender, "text": msg.data})
         await ch.save_state()
 ```
 
+Like tasks, handlers need the three limits, from themselves or a
+[module](modules.md) above them:
+
+| Option | For a handler |
+|---|---|
+| `timeout` | longest life of one run; `None` for "until idle or closed" |
+| `retries` | restarts after a crash (within 10 minutes) before it's marked failed |
+| `max_tasks` | live handlers of this pattern across the cluster; a channel waiting for a slot keeps its inbox and starts when one frees |
+| `idle_timeout` | stop after this long without messages and readers (default 10 m) |
+| `authorize` | who may read and send ([below](#authorization)) |
+
 Clients `send` to the handler; it decides what to publish:
 
 ```python
-async with app.channels.connect("room:42") as conn:
+async with app.channels.connect("room:42", identity="user:7", meta={"name": "Ada"}) as conn:
     await conn.send("hi")              # goes to the handler's inbox
     async for message in conn: ...     # what the handler publishes
 ```
@@ -61,11 +73,48 @@ async with app.channels.connect("room:42") as conn:
 - Inbox messages are acknowledged when the loop asks for the next one,
   so a crash mid-message means it is processed again.
 - It stops after `idle_timeout` without messages and readers, after
-  `max_lifetime`, or on `app.channels.close(name)`. A handler that keeps
-  crashing is retried with backoff, then marked failed
+  `timeout`, or on `app.channels.close(name)`. A handler that keeps
+  crashing is retried with backoff `retries` times, then marked failed
   (`app.channels.restart(name)`).
-- Connected readers send `join` and `leave` messages to the handler, and
-  `ch.readers()` counts them.
+
+## Authorization
+
+```python
+from syntasks import ConnectRequest
+
+
+def members_only(request: ConnectRequest) -> bool:      # may be async
+    team = request.params["team"]
+    if request.action == "send":
+        return is_admin(request.identity, team)
+    return is_member(request.identity, team)
+
+
+@app.channel("team:{team}", authorize=members_only, timeout=None, retries=3, max_tasks=None)
+async def team(ch: Channel, team: str) -> None: ...
+```
+
+`authorize` runs where a reader connects (`action="read"`) and sends
+(`action="send"`), in the web process, before anything touches Redis. A
+refusal raises `ChannelDenied`. `ConnectRequest` has the channel `name`,
+its pattern `params`, the reader's `identity` and `meta`, and the
+`action`. Server code calling `app.channels.send` / `publish` is trusted
+and not checked; call `await app.channels.authorize(name, identity, meta,
+action)` yourself if you forward user input that way.
+
+## Presence
+
+```python
+present = await app.channels.presence("room:42")   # [Presence(reader_id, identity, meta)]
+```
+
+Readers connected with `presence=True` (the default) are listed while
+connected, and the handler gets a `join` message when they connect and a
+`leave` message when they go; both carry `{"identity": ..., "meta": ...}`
+and `sender` is the reader id. `ch.readers()` counts them.
+
+For per-user notifications, publish to a `user:<id>` channel with no
+handler; every connection of that user receives it.
 
 ## Sharing work
 
