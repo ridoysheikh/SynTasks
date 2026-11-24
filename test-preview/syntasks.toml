@@ -13,6 +13,7 @@ processes = 2
 max_async_tasks = 50          # per machine, split across its processes
 
 # Short timings so the walkthrough shows a takeover in seconds, not minutes.
+# Real deployments can leave all of these at their defaults.
 [node]
 heartbeat = "1s"
 dead_after = "4s"
@@ -23,8 +24,3 @@ max_sleep = "200ms"
 
 [channels]
 lease_ttl = "3s"
-
-# `syntasks worker --profile big`
-[profiles.big.worker]
-processes = 4
-max_async_tasks = 200
