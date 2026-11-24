@@ -86,6 +86,9 @@ class AppResultBackend(RedisResultBackend[Any]):
         )
         pipe.add("PEXPIRE", stream, 3_600_000)
         await pipe.execute()
+        events = getattr(self.app, "events", None)
+        if events is not None and task_id in events.active:
+            await events.publish(task_id, "progress", progress.to_dict())
 
     async def watch_progress(
         self,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import contextlib
+import json
 import logging
 import re
 import time
@@ -18,10 +19,13 @@ from syntasks.channels.channel import (
     HANDLER_GROUP,
     PUBLISH,
     Channel,
+    ChannelDenied,
     ChannelFencedError,
     ChannelFullError,
     ChannelMessage,
     ChannelOverflowError,
+    ConnectRequest,
+    Presence,
     _HandlerSpec,
 )
 from syntasks.cluster.lease import Lease
@@ -41,6 +45,7 @@ logger = logging.getLogger("syntasks.channels")
 _HOSTS_GROUP = "hosts"
 _PATTERN_TTL = 60.0
 _MAX_HOPS = 10
+_SLOT_RETRY = 0.5  # seconds between tries for a channel waiting for max_tasks
 
 # Send to a channel's inbox and request activation of its handler.
 # KEYS: 1 in, 2 owner, 3 activating, 4 activate stream, 5 active, 6 meta
@@ -233,9 +238,13 @@ class ChannelConnection:
         last_id: str | None,
         reader_id: str | None,
         presence: bool,
+        identity: str | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         self.manager = manager
         self.name = name
+        self.identity = identity
+        self.meta = meta
         self.requested_last_id = last_id
         self.reader_id = reader_id or uuid.uuid4().hex
         self.presence = presence
@@ -249,22 +258,27 @@ class ChannelConnection:
         """Id of the last message received (pass it to resume later)."""
         return self.reader.last_id
 
+    @property
+    def _info(self) -> dict[str, Any]:
+        return {"identity": self.identity, "meta": self.meta}
+
     async def __aenter__(self) -> Self:
         manager = self.manager
+        await manager.authorize(self.name, self.identity, self.meta, "read")
         self._hub = await manager.subscribe_reader(
             self.name,
             self.reader,
             self.requested_last_id,
         )
         if self.presence:
-            await manager.touch_presence(self.name, self.reader_id)
+            await manager.touch_presence(self.name, self.reader_id, self._info)
             self._heartbeat = asyncio.create_task(self._beat())
             self._handler = await manager.has_handler(self.name)
             if self._handler:
                 with contextlib.suppress(ChannelFullError):
                     await manager.send(
                         self.name,
-                        None,
+                        self._info,
                         sender=self.reader_id,
                         kind="join",
                     )
@@ -288,11 +302,15 @@ class ChannelConnection:
                     self.manager.key(self.name, "presence"),
                     self.reader_id,
                 )
+                await self.manager.app.redis.hdel(
+                    self.manager.key(self.name, "presence:info"),
+                    self.reader_id,
+                )
                 if self._handler:
                     with contextlib.suppress(ChannelFullError):
                         await self.manager.send(
                             self.name,
-                            None,
+                            self._info,
                             sender=self.reader_id,
                             kind="leave",
                         )
@@ -302,7 +320,7 @@ class ChannelConnection:
         while True:
             await asyncio.sleep(interval)
             with contextlib.suppress(RedisError, OSError):
-                await self.manager.touch_presence(self.name, self.reader_id)
+                await self.manager.touch_presence(self.name, self.reader_id, self._info)
 
     async def send(self, data: Any, *, kind: str = "message") -> str:
         """
@@ -310,8 +328,10 @@ class ChannelConnection:
 
         :param data: JSON data.
         :param kind: message kind.
+        :raises ChannelDenied: if ``authorize`` refuses this sender.
         :return: message id.
         """
+        await self.manager.authorize(self.name, self.identity, self.meta, "send")
         return await self.manager.send(
             self.name,
             data,
@@ -349,6 +369,7 @@ class ChannelManager:
         self.handlers: builtins.list[_HandlerSpec] = []
         self.hubs: builtins.list[_Hub] = []
         self.hosted: dict[str, asyncio.Task[None]] = {}
+        self._retries: set[asyncio.Task[None]] = set()
         self._remote_patterns: builtins.list[Any] = []
         self._patterns_read = 0.0
 
@@ -382,6 +403,8 @@ class ChannelManager:
         idle_timeout: Any = "10m",
         max_lifetime: Any = None,
         max_restarts: int = 5,
+        max_tasks: int | None = None,
+        authorize: Callable[[ConnectRequest], Any] | None = None,
     ) -> Callable[[Callable[..., Awaitable[None]]], Callable[..., Awaitable[None]]]:
         """
         Register a long-running handler for channels matching ``pattern``.
@@ -393,6 +416,9 @@ class ChannelManager:
         :param idle_timeout: stop after this long without messages and readers.
         :param max_lifetime: restart the handler after this long.
         :param max_restarts: crashes within 10 minutes before giving up.
+        :param max_tasks: live handlers of this pattern across the cluster.
+        :param authorize: ``fn(ConnectRequest) -> bool`` (or awaitable) checked
+            where readers connect and send.
         :return: decorator.
         """
         regex, params = _compile(pattern)
@@ -413,6 +439,8 @@ class ChannelManager:
                     ),
                     max_restarts=max_restarts,
                     params=params,
+                    max_tasks=max_tasks,
+                    authorize=authorize,
                 ),
             )
             return func
@@ -425,6 +453,64 @@ class ChannelManager:
             if found:
                 return spec, found.groupdict()
         return None
+
+    async def authorize(
+        self,
+        name: str,
+        identity: str | None,
+        meta: dict[str, Any] | None,
+        action: str,
+    ) -> None:
+        """
+        Run the channel's ``authorize`` check (no-op without one).
+
+        :param name: channel name.
+        :param identity: who.
+        :param meta: their metadata.
+        :param action: ``read`` or ``send``.
+        :raises ChannelDenied: if refused.
+        """
+        match = self._match(name)
+        if match is None or match[0].authorize is None:
+            return
+        spec, params = match
+        request = ConnectRequest(name, params, identity, meta, action)
+        allowed = spec.authorize(request)
+        if asyncio.iscoroutine(allowed) or isinstance(allowed, Awaitable):
+            allowed = await allowed
+        if not allowed:
+            raise ChannelDenied(name=name, action=action)
+
+    async def presence(self, name: str) -> builtins.list[Presence]:
+        """
+        Readers connected to a channel now, with identity and meta.
+
+        :param name: channel name.
+        :return: one entry per connection.
+        """
+        now = self.app.cluster.clock.now_ms()
+        ids = await self.app.redis.execute(
+            "ZRANGEBYSCORE",
+            self.key(name, "presence"),
+            now,
+            "+inf",
+        )
+        if not ids:
+            return []
+        raw = await self.app.redis.execute(
+            "HMGET", self.key(name, "presence:info"), *ids
+        )
+        out = []
+        for reader_id, info in zip(ids, raw, strict=True):
+            data = json.loads(info) if info else {}
+            out.append(
+                Presence(
+                    reader_id=reader_id.decode(),
+                    identity=data.get("identity"),
+                    meta=data.get("meta"),
+                ),
+            )
+        return out
 
     async def has_handler(self, name: str) -> bool:
         """
@@ -570,6 +656,8 @@ class ChannelManager:
         last_id: str | None = None,
         reader_id: str | None = None,
         presence: bool = True,
+        identity: str | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> ChannelConnection:
         """
         Attach a reader to a channel (``async with``).
@@ -578,6 +666,8 @@ class ChannelManager:
         :param last_id: resume after this message id; None for new messages only.
         :param reader_id: stable id of the reader (default random).
         :param presence: count this reader in presence (and tell the handler).
+        :param identity: who connects, e.g. ``"user:42"`` (authorize, presence).
+        :param meta: small JSON about them, shown in presence.
         :return: connection.
         """
         return ChannelConnection(
@@ -586,6 +676,8 @@ class ChannelManager:
             last_id=last_id,
             reader_id=reader_id,
             presence=presence,
+            identity=identity,
+            meta=meta,
         )
 
     async def subscribe_reader(  # noqa: D102
@@ -644,13 +736,24 @@ class ChannelManager:
         self.hubs.append(hub)
         return hub
 
-    async def touch_presence(self, name: str, reader_id: str) -> None:  # noqa: D102
+    async def touch_presence(  # noqa: D102
+        self,
+        name: str,
+        reader_id: str,
+        info: dict[str, Any] | None = None,
+    ) -> None:
         ttl_ms = int(self.app.config.channels.presence_ttl * 1000)
         now = self.app.cluster.clock.now_ms()
         key = self.key(name, "presence")
         pipe = self.app.redis.pipeline()
         pipe.add("ZADD", key, now + ttl_ms, reader_id)
         pipe.add("PEXPIRE", key, max(ttl_ms * 2, 60_000))
+        if info is not None:
+            info_key = self.key(name, "presence:info")
+            pipe.add(
+                "HSET", info_key, reader_id, json.dumps(info, separators=(",", ":"))
+            )
+            pipe.add("PEXPIRE", info_key, max(ttl_ms * 2, 60_000))
         pipe.add("ZADD", self._active_key, now, name)
         await pipe.execute()
 
@@ -924,6 +1027,16 @@ class ChannelManager:
                 )
             return
         spec, params = match
+        slot = None
+        if spec.max_tasks is not None:
+            slot = self.app.cluster.semaphore(
+                f"chan:{spec.pattern}",
+                spec.max_tasks,
+                ttl_ms=int(self.app.config.channels.lease_ttl * 1000),
+            )
+            if not await slot.acquire(self._slot_holder(name)):
+                self._retry_later(name)
+                return
         lease = Lease(
             self.app.redis,
             self.key(name, "owner"),
@@ -932,8 +1045,36 @@ class ChannelManager:
             self.app.keys("lease", "token"),
         )
         if not await lease.acquire():
+            if slot is not None:
+                await slot.release(self._slot_holder(name))
             return
-        self.hosted[name] = asyncio.create_task(self._run(spec, name, params, lease))
+        self.hosted[name] = asyncio.create_task(
+            self._run(spec, name, params, lease, slot),
+        )
+
+    def _slot_holder(self, name: str) -> str:
+        return f"{self.app.cluster.node_id}|{name}"
+
+    def _retry_later(self, name: str) -> None:
+        """Ask again for a channel waiting for a free handler slot."""
+
+        async def retry() -> None:
+            await asyncio.sleep(_SLOT_RETRY)
+            with contextlib.suppress(RedisError, OSError):
+                if await self.app.redis.xlen(self.key(name, "in")) > 0:
+                    await self.app.redis.execute(
+                        "XADD",
+                        self._activate_key,
+                        "*",
+                        "name",
+                        name,
+                        "hops",
+                        "0",
+                    )
+
+        task = asyncio.create_task(retry())
+        self._retries.add(task)
+        task.add_done_callback(self._retries.discard)
 
     async def _run(
         self,
@@ -941,10 +1082,12 @@ class ChannelManager:
         name: str,
         params: dict[str, str],
         lease: Lease,
+        slot: Any = None,
     ) -> None:
         channel = Channel(self, name, params, lease, idle_timeout=spec.idle_timeout)
         crashed: BaseException | None = None
-        renewer = asyncio.create_task(self._renew(lease))
+        holder = self._slot_holder(name)
+        renewer = asyncio.create_task(self._renew(lease, slot, holder))
         handler: asyncio.Task[None] | None = None
         logger.info("Channel %s: handler started on this node.", name)
         try:
@@ -978,15 +1121,19 @@ class ChannelManager:
                 await renewer
             self.hosted.pop(name, None)
             with contextlib.suppress(RedisError, OSError):
+                if slot is not None:
+                    await asyncio.shield(slot.release(holder))
                 await asyncio.shield(self._after_run(spec, name, lease, crashed))
 
-    async def _renew(self, lease: Lease) -> None:
+    async def _renew(self, lease: Lease, slot: Any = None, holder: str = "") -> None:
         interval = lease.ttl_ms / 3000
         while True:
             await asyncio.sleep(interval)
             try:
                 if not await lease.renew():
                     return
+                if slot is not None:
+                    await slot.renew(holder)
             except (RedisError, OSError):
                 return
 

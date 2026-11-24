@@ -18,6 +18,7 @@ import contextlib
 import contextvars
 import functools
 import inspect
+import json
 import logging
 import time
 import traceback
@@ -66,6 +67,25 @@ class RunningTask:
     started: float
     runner: asyncio.Task[Any] | None = None
     cancel_requested: bool = False
+
+
+def _final_event(result: SynTasksResult[Any], retried: bool) -> tuple[str, Any]:
+    """The event that ends an attempt: retrying, succeeded, failed, cancelled."""
+    error = result.error
+    if retried:
+        return "retrying", {"error": None if error is None else str(error)}
+    if not result.is_err:
+        value = result.return_value
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError):
+            value = None
+        return "succeeded", {"return_value": value}
+    kind = "cancelled" if isinstance(error, TaskCancelledError) else "failed"
+    return kind, {
+        "error": None if error is None else str(error) or repr(error),
+        "error_type": None if error is None else type(error).__name__,
+    }
 
 
 class AppReceiver(Receiver):
@@ -268,11 +288,23 @@ class AppReceiver(Receiver):
         if ack_time == AcknowledgeType.WHEN_RECEIVED and ack.is_ackable:
             await ack.ack()
 
-        result = await self.run_task(
-            target=task.original_func,
-            message=msg,
-            ack_controller=ack,
-        )
+        events = self.app.events if options.events else None
+        if events is not None:
+            events.active.add(msg.task_id)
+            await events.publish(
+                msg.task_id,
+                "started",
+                {"attempt": int(msg.labels.get("_attempt", 0))},
+            )
+        try:
+            result = await self.run_task(
+                target=task.original_func,
+                message=msg,
+                ack_controller=ack,
+            )
+        finally:
+            if events is not None:
+                events.active.discard(msg.task_id)
 
         if delivery is not None:
             # The run is over: let the next one start while we store the result.
@@ -281,6 +313,8 @@ class AppReceiver(Receiver):
         retried = False
         if result.is_err and not isinstance(result.error, _NO_RETRY):
             retried = await self._maybe_retry(msg, options)
+        if events is not None:
+            await events.publish(msg.task_id, *_final_event(result, retried))
 
         if ack_time == AcknowledgeType.WHEN_EXECUTED and ack.is_ackable:
             await ack.ack()

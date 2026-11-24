@@ -265,6 +265,7 @@ class AsyncKicker(Generic[_FuncParams, _ReturnType]):
                 task_id=duplicate.task_id,
                 result_backend=self.broker.result_backend,
                 return_type=self.return_type,  # type: ignore
+                task_name=self.task_name,
             )
         except SendTaskError:
             raise
@@ -279,6 +280,7 @@ class AsyncKicker(Generic[_FuncParams, _ReturnType]):
             task_id=message.task_id,
             result_backend=self.broker.result_backend,
             return_type=self.return_type,  # type: ignore # (pyright issue)
+            task_name=self.task_name,
         )
 
     @classmethod

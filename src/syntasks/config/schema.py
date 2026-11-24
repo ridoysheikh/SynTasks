@@ -249,6 +249,10 @@ class TaskConfig:
         doc="Run the first call per key, drop the rest for this long (needs key).",
         scope="cluster",
     )
+    events: bool | None = setting(
+        doc="Publish lifecycle events and Emit output to the channel task:<id>.",
+        scope="cluster",
+    )
     on_success: str | None = setting(
         doc="Task sent with a TaskOutcome after a successful run.",
         scope="cluster",

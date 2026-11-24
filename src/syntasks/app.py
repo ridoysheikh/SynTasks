@@ -30,7 +30,13 @@ from syntasks.decor import AsyncSynTasksDecoratedTask
 from syntasks.kicker import AsyncKicker
 from syntasks.message import BrokerMessage
 from syntasks.modules import Declarations
-from syntasks.options import OptionLayer, TaskOptions, resolve_chain
+from syntasks.options import (
+    REQUIRED,
+    OptionLayer,
+    TaskOptions,
+    parse_layer,
+    resolve_chain,
+)
 from syntasks.queues import QueueEngine, QueueManager
 from syntasks.redis.client import Redis
 from syntasks.redis.connection import ConnectionOptions
@@ -152,10 +158,12 @@ class SynTasks(Declarations, AsyncBroker):  # type: ignore[misc]
         from syntasks.channels import ChannelManager  # noqa: PLC0415
         from syntasks.logs import LogManager  # noqa: PLC0415
         from syntasks.results.completion import Completion  # noqa: PLC0415
+        from syntasks.results.events import TaskEvents  # noqa: PLC0415
         from syntasks.scheduler import ScheduleManager  # noqa: PLC0415
         from syntasks.worker.control import TaskControl  # noqa: PLC0415
 
         self.completion = Completion(self)
+        self.events = TaskEvents(self)
         self.schedules = ScheduleManager(self)
         self.channels = ChannelManager(self)
         self.logs = LogManager(self)
@@ -227,7 +235,16 @@ class SynTasks(Declarations, AsyncBroker):  # type: ignore[misc]
         chain: list[OptionLayer],
     ) -> None:
         """Register a channel handler declared here or in an attached module."""
-        self.channels.handler(pattern, **options)(func)
+        limits = {k: options.pop(k) for k in list(options) if k in REQUIRED}
+        layer = parse_layer(f"channel {pattern}", limits)
+        resolved = resolve_chain([*chain, layer], what=f"channel {pattern}")
+        self.channels.handler(
+            pattern,
+            max_lifetime=resolved.timeout,
+            max_restarts=resolved.retries,
+            max_tasks=resolved.max_tasks,
+            **options,
+        )(func)
 
     def queue_options(self, name: str) -> QueueConfig:
         """

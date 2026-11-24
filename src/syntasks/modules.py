@@ -299,8 +299,13 @@ class Declarations:
         """
         Register a long-running channel handler (see :mod:`syntasks.channels`).
 
+        ``timeout`` (the handler's longest life), ``retries`` (restarts after
+        a crash) and ``max_tasks`` (live handlers of this pattern across the
+        cluster) are required, from here or the module chain.
+
         :param pattern: channel name pattern, e.g. ``"room:{room_id}"``.
-        :param options: handler options.
+        :param options: ``timeout``, ``retries``, ``max_tasks``,
+            ``idle_timeout``, ``authorize``.
         :return: decorator.
         """
 

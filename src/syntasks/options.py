@@ -56,6 +56,7 @@ class TaskOptions:
     fair: bool = False
     debounce: float | None = None
     throttle: float | None = None
+    events: bool = False
     on_success: str | None = None
     on_failure: str | None = None
     retries: int = 0

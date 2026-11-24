@@ -20,15 +20,54 @@ if TYPE_CHECKING:  # pragma: no cover
 
 __all__ = [
     "Channel",
+    "ChannelDenied",
     "ChannelFencedError",
     "ChannelFullError",
     "ChannelMessage",
     "ChannelOverflowError",
+    "ConnectRequest",
+    "Presence",
 ]
 
 logger = logging.getLogger("syntasks.channels")
 
 HANDLER_GROUP = "handler"
+
+
+class ChannelDenied(SynTasksError):  # noqa: N818
+    """``authorize`` refused a reader or sender."""
+
+    __template__ = "Not allowed to {action} channel {name!r}."
+    name: str
+    action: str
+
+
+@dataclass(frozen=True)
+class ConnectRequest:
+    """
+    What ``authorize`` decides on.
+
+    :param name: channel name.
+    :param params: values matched by the handler's pattern.
+    :param identity: who connects (``connect(..., identity=...)``).
+    :param meta: what they told about themselves (``meta=``).
+    :param action: ``"read"`` (connect) or ``"send"``.
+    """
+
+    name: str
+    params: dict[str, str]
+    identity: str | None
+    meta: dict[str, Any] | None
+    action: str
+
+
+@dataclass(frozen=True)
+class Presence:
+    """A reader connected to a channel now."""
+
+    reader_id: str
+    identity: str | None
+    meta: dict[str, Any] | None
 
 
 class ChannelFullError(SynTasksError):
@@ -314,3 +353,5 @@ class _HandlerSpec:
     max_restarts: int = 5
     restart_window: float = 600.0
     params: list[str] = field(default_factory=list)
+    max_tasks: int | None = None
+    authorize: Any = None

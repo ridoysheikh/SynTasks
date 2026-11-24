@@ -12,6 +12,7 @@ from syntasks.brokers.inmemory_broker import InMemoryBroker
 from syntasks.brokers.multi_broker import MultiBroker
 from syntasks.brokers.shared_broker import async_shared_broker
 from syntasks.channels import Channel, ChannelMessage
+from syntasks.channels.channel import ChannelDenied, ConnectRequest, Presence
 from syntasks.config import Config, ConfigError, load_config
 from syntasks.context import Context
 from syntasks.dependencies import Depends
@@ -57,6 +58,7 @@ from syntasks.results.completion import (
     GroupOutcome,
     TaskOutcome,
 )
+from syntasks.results.events import Emit
 from syntasks.scheduler import (
     Runtime,
     ScheduleError,
@@ -84,13 +86,16 @@ __all__ = [
     "BatchProgress",
     "BrokerMessage",
     "Channel",
+    "ChannelDenied",
     "ChannelMessage",
     "Config",
     "ConfigError",
+    "ConnectRequest",
     "Context",
     "Deadline",
     "Depends",
     "DuplicateTaskError",
+    "Emit",
     "GroupOutcome",
     "InMemoryBroker",
     "Module",
@@ -99,6 +104,7 @@ __all__ = [
     "NoResultError",
     "PayloadInvalidError",
     "PayloadTooLargeError",
+    "Presence",
     "PrometheusMiddleware",
     "QueueFullError",
     "Redis",

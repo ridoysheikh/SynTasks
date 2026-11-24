@@ -326,6 +326,32 @@ class QueueEngine:
 
     async def kick(self, message: BrokerMessage) -> str:
         """
+        Put a message into its queue (publishing ``queued`` for ``events``).
+
+        :param message: formatted message.
+        :raises QueueFullError: if the queue is full and rejects.
+        :raises DuplicateTaskError: if ``unique_for`` dropped it.
+        :raises PayloadTooLargeError: if the message is too big.
+        :return: stream entry id, or ``""`` if delayed.
+        """
+        options = self.app.options_for(message.task_name)
+        if not options.events or message.labels.get("_retry"):
+            return await self._kick(message)
+        await self.app.events.publish(message.task_id, "queued")
+        try:
+            return await self._kick(message)
+        except DuplicateTaskError:
+            raise
+        except Exception as exc:
+            await self.app.events.publish(
+                message.task_id,
+                "failed",
+                {"error": str(exc), "error_type": type(exc).__name__},
+            )
+            raise
+
+    async def _kick(self, message: BrokerMessage) -> str:
+        """
         Put a message into its queue.
 
         :param message: formatted message.
