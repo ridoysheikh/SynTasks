@@ -228,6 +228,27 @@ class TaskConfig:
         scope="cluster",
     )
     rate_burst: int | None = setting(doc="Rate limit burst.", scope="cluster")
+    rate_per_key: str | None = setting(
+        unit="rate",
+        doc="Rate limit per key, e.g. '5/m' (needs key).",
+        scope="cluster",
+    )
+    fair: bool | None = setting(
+        doc="Serve keys round-robin so a big backlog of one key doesn't starve "
+        "others (needs key).",
+        scope="cluster",
+    )
+    debounce: float | None = setting(
+        unit="duration",
+        doc="Run once this long after the last call per key, with its "
+        "arguments (needs key).",
+        scope="cluster",
+    )
+    throttle: float | None = setting(
+        unit="duration",
+        doc="Run the first call per key, drop the rest for this long (needs key).",
+        scope="cluster",
+    )
     retries: int | None = setting(doc="Retries after an exception.", scope="cluster")
     retry_delay: float | None = setting(
         unit="duration",

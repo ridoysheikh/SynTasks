@@ -15,6 +15,12 @@ Key layout (under ``syntasks:{<app>}:``):
 ``q:<queue>:meta``                    HASH (``paused``)
 ``q:uniq:<hash>``                     dedupe key for ``unique_for``
 ``q:park:<task>:<key>``               LIST of messages waiting for a per-key slot
+``q:<queue>:fair:<task>``             LIST: rotation of keys with waiting messages
+``q:<queue>:fair:<task>:active``      SET of those keys
+``q:<queue>:fair:<task>:k:<key>``     LIST of one key's waiting messages (fair)
+``q:deb:<task>:<key>``                the waiting debounced message of a key
+``q:throttle:<task>:<key>``           first task id of a key's throttle window
+``lim:rate:key:<task>:<key>``         per-key rate limit state
 ``lim:sem:task:<task>``               cluster concurrency slots of a task
 ``lim:wake:task:<task>``              wake list of a gated task (kick / slot release)
 ==================================  ==============================================
@@ -91,6 +97,18 @@ class Delivery(AckableMessage):
 
 def _noop_ack() -> None:  # pragma: no cover
     """Placeholder; replaced right after the delivery is built."""
+
+
+def _delay_ms(raw_delay: Any) -> str:
+    """The ``delay`` label in milliseconds, or ``""`` for none."""
+    if raw_delay in (None, "", 0, "0"):
+        return ""
+    try:
+        delay = float(str(raw_delay))
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid delay label %r.", raw_delay)
+        return ""
+    return str(math.ceil(delay * 1000)) if delay > 0 else ""
 
 
 class QueueEngine:
@@ -216,6 +234,92 @@ class QueueEngine:
         ).hexdigest()
         return self.keys("q", "uniq", digest)
 
+    def key_of(self, task_name: str, options: TaskOptions, payload: Any) -> str | None:
+        """
+        The value of a task's ``key`` option in a call, as text.
+
+        :param task_name: task name.
+        :param options: task options.
+        :param payload: the message (dict with ``args`` / ``kwargs``) or its JSON.
+        :return: key text, or None without a key (or if it's missing).
+        """
+        if not options.key:
+            return None
+        try:
+            data = json.loads(payload) if isinstance(payload, (bytes, str)) else payload
+            task = self.app.find_task(task_name)
+            value = extract_argument(
+                options.key,
+                task.original_func if task is not None else None,
+                data.get("args", []),
+                data.get("kwargs", {}),
+            )
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+            logger.warning(
+                "Task %s: key %r not found in the call.", task_name, options.key
+            )
+            return None
+        return key_text(value)
+
+    def _delayed_member(self, stream: str, task_name: str, data: bytes) -> bytes:
+        """A delayed-zset member: random prefix, stream, task, data."""
+        head = (
+            f"{uuid.uuid4().hex}{len(stream):04d}{stream}"
+            f"{len(task_name.encode()):04d}{task_name}"
+        )
+        return head.encode() + data
+
+    async def _debounce(
+        self,
+        message: BrokerMessage,
+        queue: str,
+        stream: str,
+        options: TaskOptions,
+        key: str,
+    ) -> str:
+        assert options.debounce is not None  # noqa: S101
+        reply = await scripts.DEBOUNCE(
+            self.redis,
+            [
+                self.delayed_key(queue),
+                self.keys("q", "deb", message.task_name, key),
+                self.index_key,
+                self.streams_key(queue),
+                stream,
+            ],
+            [
+                self._delayed_member(stream, message.task_name, message.message),
+                math.ceil(options.debounce * 1000),
+                message.task_id,
+                queue,
+                self.group,
+            ],
+        )
+        if reply[0] == b"replaced":
+            await self._supersede(reply[1].decode(), message.task_id, options)
+        if options.debounce < self.app.config.scheduler.max_sleep:
+            with contextlib.suppress(RedisError, OSError):
+                await self.app.cluster.control.publish("delayed", queue=queue)
+        return ""
+
+    async def _supersede(
+        self, old_task_id: str, new_task_id: str, options: TaskOptions
+    ) -> None:
+        """Give the handle of a replaced debounced call its result."""
+        from syntasks.exceptions import TaskSupersededError  # noqa: PLC0415
+        from syntasks.result import SynTasksResult  # noqa: PLC0415
+
+        result: SynTasksResult[Any] = SynTasksResult(
+            is_err=True,
+            return_value=None,
+            execution_time=0.0,
+            error=TaskSupersededError(task_id=new_task_id),
+        )
+        with contextlib.suppress(RedisError, OSError):
+            await self.app.result_backend.store(
+                old_task_id, result, ttl=options.result_ttl
+            )
+
     async def kick(self, message: BrokerMessage) -> str:
         """
         Put a message into its queue.
@@ -233,21 +337,21 @@ class QueueEngine:
             what=f"Message of task {message.task_name}",
         )
         queue_config = self.app.queue_options(queue)
-        delay_ms = ""
-        raw_delay = message.labels.get("delay")
-        if raw_delay not in (None, "", 0, "0"):
-            try:
-                delay = float(str(raw_delay))
-            except (TypeError, ValueError):
-                logger.warning("Ignoring invalid delay label %r.", raw_delay)
-            else:
-                if delay > 0:
-                    delay_ms = str(math.ceil(delay * 1000))
+        delay_ms = _delay_ms(message.labels.get("delay"))
+        retry = bool(message.labels.get("_retry"))
+        key = self.key_of(message.task_name, options, message.message)
+        if options.debounce and key is not None and not retry and not delay_ms:
+            return await self._debounce(message, queue, stream, options, key)
         unique_ttl = ""
         unique_key = self.keys("q", "uniq", "-")
-        if options.unique_for and not message.labels.get("_retry"):
+        if options.unique_for and not retry:
             unique_ttl = str(math.ceil(options.unique_for * 1000))
             unique_key = self._unique_key(message, options)
+        if options.throttle and key is not None and not retry:
+            unique_ttl = str(math.ceil(options.throttle * 1000))
+            unique_key = self.keys("q", "throttle", message.task_name, key)
+        fair_key = key if options.fair and key is not None and not delay_ms else ""
+        fair = self.keys("q", queue, "fair", message.task_name)
         reply = await scripts.KICK(
             self.redis,
             [
@@ -257,6 +361,9 @@ class QueueEngine:
                 self.task_wake_key(message.task_name),
                 unique_key,
                 self.delayed_key(queue),
+                f"{fair}:k:{fair_key}",
+                fair,
+                f"{fair}:active",
             ],
             [
                 message.message,
@@ -270,6 +377,7 @@ class QueueEngine:
                 self.group,
                 "1" if self.dedicated(options) else "",
                 uuid.uuid4().hex,
+                fair_key,
             ],
         )
         status = reply[0].decode()
@@ -440,6 +548,13 @@ class QueueEngine:
             claim = str(self.claim_idle_ms)
             self._next_gated_claim[name] = now + self.claim_idle_ms / 2000
         semaphore = self.task_semaphore(name)
+        if options.fair:
+            fair = self.keys("q", options.queue, "fair", name)
+            await scripts.FAIR_FEED(
+                self.redis,
+                [fair, f"{fair}:active", stream],
+                [f"{fair}:k:", self.group, name, 1],
+            )
         reply = await scripts.GATED_TAKE(
             self.redis,
             [
@@ -707,7 +822,50 @@ class QueueEngine:
         if buffered:
             logger.info("Requeued %d prefetched message(s).", len(buffered))
 
-    # -- per-key concurrency --------------------------------------------
+    # -- per-key limits ----------------------------------------------------
+
+    async def rate_key(
+        self, delivery: Delivery, options: TaskOptions, key: str
+    ) -> bool:
+        """
+        Check a delivery against its key's rate (``rate_per_key``).
+
+        Over the rate, the message goes back as a delayed message for when the
+        key's rate allows, and the delivery ends here.
+
+        :param delivery: the delivery.
+        :param options: task options.
+        :param key: key value as text.
+        :return: True to run it now.
+        """
+        rate = options.rate_per_key
+        assert rate is not None  # noqa: S101
+        reply = await scripts.RATE_DEFER(
+            self.redis,
+            [
+                self.keys("lim", "rate", "key", delivery.task_name, key),
+                self.delayed_key(delivery.queue),
+                delivery.stream,
+            ],
+            [
+                repr(rate.emission_ms),
+                rate.burst,
+                self.group,
+                delivery.entry_id,
+                self._delayed_member(
+                    delivery.stream, delivery.task_name, delivery.data
+                ),
+            ],
+        )
+        if reply[0] == b"ok":
+            return True
+        wait_ms = int(reply[1])
+        if wait_ms < self.app.config.scheduler.max_sleep * 1000:
+            with contextlib.suppress(RedisError, OSError):
+                await self.app.cluster.control.publish("delayed", queue=delivery.queue)
+        delivery.ack = _noop_ack
+        await self.finish(delivery)
+        return False
 
     async def acquire_key(
         self,

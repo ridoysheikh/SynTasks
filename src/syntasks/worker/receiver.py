@@ -202,6 +202,17 @@ class AppReceiver(Receiver):
             await ack.ack()
             return
 
+        if delivery is not None and options.rate_per_key is not None and options.key:
+            call = {"args": msg.args, "kwargs": msg.kwargs}
+            rate_key = self.app.engine.key_of(msg.task_name, options, call)
+            if rate_key is not None and not await self.app.engine.rate_key(
+                delivery,
+                options,
+                rate_key,
+            ):
+                logger.debug("Task %s deferred by its key's rate.", msg.task_id)
+                return
+
         if delivery is not None and options.key and options.max_tasks_per_key:
             try:
                 key = key_text(

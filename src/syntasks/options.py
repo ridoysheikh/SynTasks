@@ -52,6 +52,10 @@ class TaskOptions:
     key: str | None = None
     max_tasks_per_key: int | None = None
     rate: Rate | None = None
+    rate_per_key: Rate | None = None
+    fair: bool = False
+    debounce: float | None = None
+    throttle: float | None = None
     retries: int = 0
     retry_delay: float = 1.0
     retry_backoff: float = 2.0
@@ -72,7 +76,7 @@ class TaskOptions:
     @property
     def gated(self) -> bool:
         """Whether the task needs a slot or rate check before it is fetched."""
-        return bool(self.max_tasks or self.max_tasks_per_node or self.rate)
+        return bool(self.max_tasks or self.max_tasks_per_node or self.rate or self.fair)
 
     def retry_delay_for(self, attempt: int) -> float:
         """
@@ -93,8 +97,8 @@ class TaskOptions:
 _NULLABLE = frozenset(
     f.name
     for f in dataclasses.fields(TaskOptions)
-    if f.default is None and f.name != "rate"
-) | {"rate", "rate_burst"}
+    if f.default is None and f.name not in ("rate", "rate_per_key")
+) | {"rate", "rate_burst", "rate_per_key"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -179,23 +183,42 @@ def resolve_chain(
             )
     rate_text = values.pop("rate", None)
     rate_burst = values.pop("rate_burst", None)
+    per_key_text = values.pop("rate_per_key", None)
     known = {f.name for f in dataclasses.fields(TaskOptions)}
     values = {k: v for k, v in values.items() if k in known}
     if values.get("tags") is not None:
         values["tags"] = tuple(values["tags"])
     rate = parse_rate(rate_text, burst=rate_burst) if rate_text else None
-    options = TaskOptions(**values, rate=rate)
+    per_key = parse_rate(per_key_text) if per_key_text else None
+    options = TaskOptions(**values, rate=rate, rate_per_key=per_key)
     _check(options)
     return options
 
 
 def _check(options: TaskOptions) -> None:
+    _check_limits(options)
+    _check_keys(options)
+
+
+def _check_keys(options: TaskOptions) -> None:
+    for name in ("max_tasks_per_key", "rate_per_key", "fair", "debounce", "throttle"):
+        if getattr(options, name) and not options.key:
+            raise ConfigError(detail=f"{name} needs key, e.g. key='kwargs.tenant_id'.")
+    exclusive = (
+        ("debounce", "throttle"),
+        ("throttle", "unique_for"),
+        ("debounce", "fair"),
+    )
+    for first, second in exclusive:
+        if getattr(options, first) and getattr(options, second):
+            raise ConfigError(detail=f"{first} and {second} can't be combined.")
+
+
+def _check_limits(options: TaskOptions) -> None:
     for name in ("max_tasks", "max_tasks_per_node", "max_tasks_per_key"):
         value = getattr(options, name)
         if value is not None and value < 1:
             raise ConfigError(detail=f"{name} must be at least 1, got {value}.")
-    if options.max_tasks_per_key and not options.key:
-        raise ConfigError(detail="max_tasks_per_key needs key.")
     if (
         options.soft_timeout is not None
         and options.timeout is not None

@@ -30,6 +30,7 @@ from syntasks.exceptions import (
     SynTasksResultTimeoutError,
     TaskCancelledError,
     TaskMemoryError,
+    TaskSupersededError,
     TaskTimeoutError,
 )
 from syntasks.funcs import gather
@@ -117,6 +118,7 @@ __all__ = [
     "SynTasksState",
     "TaskCancelledError",
     "TaskMemoryError",
+    "TaskSupersededError",
     "TaskTimeoutError",
     "__version__",
     "after",
