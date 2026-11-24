@@ -43,7 +43,7 @@ Install the web dependencies once (`fastapi`, `uvicorn`, `websockets`):
 uv sync --all-extras --group preview        # from the repository root
 ```
 
-Then start five things, each in its own terminal, from `test-preview/`.
+Then start four things, each in its own terminal, from `test-preview/`.
 Redis listens on 55460, which is what `syntasks.toml` expects:
 
 ```bash
@@ -52,24 +52,37 @@ redis-server --port 55460 --save "" --appendonly no      # or: docker compose up
 ../.venv/bin/syntasks worker                              # worker1 (one "machine", 2 processes)
 ../.venv/bin/syntasks worker                              # worker2 (another "machine")
 
-WEB_NAME=web1 ../.venv/bin/uvicorn shop.web:api --port 8001
-WEB_NAME=web2 ../.venv/bin/uvicorn shop.web:api --port 8002
+../.venv/bin/uvicorn shop.web:api --port 8001             # the web server
 ```
 
-Open <http://127.0.0.1:8001/> and <http://127.0.0.1:8002/>. Each page shows
-which web server served it, and the worker processes grouped by machine.
-Every card is a feature; the cards say what to expect. Things worth doing:
+Open <http://127.0.0.1:8001/>. The page shows the worker processes grouped
+by machine, and every card is a feature; the cards say what to expect.
+Things worth doing:
 
-- **Send on one server, read on the other.** Start a charge on web1, then look it up on web2: `GET /api/tasks/<id>`. The task ran on whichever worker had room.
 - **Spread over the workers.** Send 40 tiny tasks: both machines and all four processes get a share.
+- **Retries.** Send the charge `A-1007`: it fails once, is retried, and the result says it finished on attempt 2 and which machine ran it.
 - **Kill a worker** (`Ctrl-C` worker1, or `kill -9` its supervisor) while the cluster card refreshes. Its processes disappear, the other machine carries on, the `heartbeat` schedule keeps firing, and a channel it hosted moves.
-- **Two tabs, two web servers.** Connect `staff:ada` on web1 and `staff:alan` on web2 to the live channel: one handler serves both. Alan can read but is refused when he posts; `guest:eve` can't connect.
-- **Watchlists in two tabs.** Open the same user on both servers, subscribe a group of symbols, then use *Restore* in the second tab: it joins the first tab's groups and gets the last values at once. *Vendor calls* shows the vendor is asked once per symbol, and it stops about two seconds after the last tab leaves.
+- **Live channel.** Open the page in two browser tabs, connect `staff:ada` in one and `staff:alan` in the other: one handler serves both. Alan can read but is refused when he posts; `guest:eve` can't connect.
+- **Watchlists.** In two tabs with the same user, subscribe a group of symbols in the first, then use *Restore* in the second: it joins the first tab's groups and gets the last values at once. *Vendor calls* shows the vendor is asked once per symbol, and it stops about two seconds after the last tab leaves.
 - **Posts.** Schedule four posts for one owner: the fourth is refused (`max_per_owner = 3`). A post set 20 s ahead runs on a worker and shows `done / ok`.
 
 The endpoints are plain JSON, so `curl` works too, and
 <http://127.0.0.1:8001/docs> lists them all. The `XX-99` price lookup
 raises on the worker on purpose, so it appears under `syntasks queues dlq default`.
+
+### Optional: a second web server
+
+Web servers keep no state, so you can run as many as you like behind a load
+balancer. To see that, start another one and use both:
+
+```bash
+WEB_NAME=web2 ../.venv/bin/uvicorn shop.web:api --port 8002
+```
+
+Start a charge on <http://127.0.0.1:8001/>, then fetch it from the other
+server: `curl localhost:8002/api/tasks/<task_id>`. Connect `staff:ada` on one
+server and `staff:alan` on the other: they still share one channel handler,
+and a watchlist saved through one server is restored through the other.
 
 ## What the walkthrough does
 

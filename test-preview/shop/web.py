@@ -2,13 +2,13 @@
 The shop's web server: FastAPI in front of the same app the workers run.
 
     uvicorn shop.web:api --port 8001
-    WEB_NAME=web2 uvicorn shop.web:api --port 8002      # a second web server
+    WEB_NAME=web2 uvicorn shop.web:api --port 8002      # optional: a second one
 
 A web server never runs tasks. It sends them with `.kiq()` / `.call()`, reads
 results and events, schedules runtime copies, and keeps the sockets of users;
-the workers (`syntasks worker`, one or several machines) do the work. Run two
-web servers and two workers and use any of them: it is all one app on one
-Redis. Open http://127.0.0.1:8001/ for a page that drives every endpoint.
+the workers (`syntasks worker`, one or several machines) do the work. One web
+server is enough; more than one all serve the same app on the same Redis.
+Open http://127.0.0.1:8001/ for a page that drives every endpoint.
 """
 
 import asyncio

@@ -36,7 +36,7 @@
 <header>
   <h1>SynTasks shop</h1>
   <span>this page is served by <b id="served">…</b></span>
-  <span>open it on two web servers and two workers: it is one app on one Redis</span>
+  <span>the web server only sends and relays; the workers do the work</span>
 </header>
 <main>
 
@@ -126,7 +126,7 @@
 
 <section>
   <h2>Live channel</h2>
-  <p class="why"><code>sales:live</code>: one handler for the whole cluster. staff:ada and staff:alan may read, only staff:ada may post, guest:eve is refused. Connect two tabs, one on each web server.</p>
+  <p class="why"><code>sales:live</code>: one handler for the whole cluster. staff:ada and staff:alan may read, only staff:ada may post, guest:eve is refused. Connect two tabs.</p>
   <div class="row">
     <select id="who"><option>staff:ada</option><option>staff:alan</option><option>guest:eve</option></select>
     <button onclick="liveConnect()">Connect</button>
