@@ -136,6 +136,13 @@ STEPS: list[tuple[str, str, list[list[str]]]] = [
         "only Ada post; presence shows who is connected.",
         [["shop", "live"]],
     ),
+    (
+        "One feed, many watchers",
+        "ticker:{symbol} has one handler in the whole cluster that owns the upstream "
+        "feed. Five users watching AAPL and one watching MSFT cost two feeds, not six; "
+        "everyone sees the same ticks.",
+        [["shop", "ticker"]],
+    ),
 ]
 
 

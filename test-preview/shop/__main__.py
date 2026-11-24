@@ -13,6 +13,7 @@ The shop's command line: each command sends work to the running workers.
     python -m shop posts           users schedule their own posts (runtime schedules)
     python -m shop campaign        a campaign: pause, resume, progress, summary
     python -m shop live            the live channel: authorization, presence, takeover
+    python -m shop ticker          one upstream feed per symbol, many watchers
 """
 
 import argparse
@@ -267,6 +268,33 @@ async def live() -> None:
                 break
 
 
+async def watch(symbol: str, who: str, ticks: int) -> list[dict[str, Any]]:
+    seen: list[dict[str, Any]] = []
+    async with app.channels.connect(f"ticker:{symbol}", identity=who) as conn:
+        async for message in conn:
+            if message.kind == "message" and "tick" in (message.data or {}):
+                seen.append(message.data)
+                if len(seen) == ticks:
+                    break
+    return seen
+
+
+async def ticker() -> None:
+    watchers = [("AAPL", f"user:{n}") for n in range(5)] + [("MSFT", "user:9")]
+    results = await asyncio.gather(*(watch(s, who, 5) for s, who in watchers))
+    for symbol in ("AAPL", "MSFT"):
+        mine = [r for (s, _), r in zip(watchers, results, strict=True) if s == symbol]
+        feeds = {tick["feed"] for r in mine for tick in r}
+        nodes = {tick["by"] for r in mine for tick in r}
+        common = set.intersection(*({t["tick"] for t in r} for r in mine))
+        print(
+            f"  {symbol}: {len(mine)} watchers, upstream feeds opened: "
+            f"{len(feeds)}, handler nodes: {len(nodes)}, "
+            f"ticks every watcher saw: {len(common) if len(mine) > 1 else 'n/a'}"
+        )
+    print("  one feed per symbol, shared by everyone watching it")
+
+
 COMMANDS: dict[str, Any] = {
     "orders": lambda a: orders(a.n or 8),
     "ship": lambda a: ship_all(),
@@ -280,6 +308,7 @@ COMMANDS: dict[str, Any] = {
     "posts": lambda a: posts(),
     "campaign": lambda a: campaign(),
     "live": lambda a: live(),
+    "ticker": lambda a: ticker(),
 }
 
 
