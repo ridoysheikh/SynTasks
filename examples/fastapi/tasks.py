@@ -4,10 +4,10 @@ from typing import Annotated
 from syntasks import Channel, SynTasks, SynTasksDepends
 from syntasks.depends.progress_tracker import ProgressTracker, TaskState
 
-app = SynTasks()
+app = SynTasks(timeout="5m", retries=0, max_tasks=None)
 
 
-@app.task(timeout="2m", concurrency=4)  # at most 4 reports at once, across all workers
+@app.task(timeout="2m", max_tasks=4)  # at most 4 reports at once, on all workers
 async def build_report(
     month: str,
     progress: Annotated[ProgressTracker[str], SynTasksDepends()],

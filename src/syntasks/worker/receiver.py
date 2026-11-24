@@ -161,7 +161,7 @@ class AppReceiver(Receiver):
             message.ack if isinstance(message, AckableMessage) else None,
         )
         data = message.data if isinstance(message, AckableMessage) else message
-        queue = delivery.queue if delivery else self.app.config.defaults.queue
+        queue = delivery.queue if delivery else "default"
         try:
             msg = self.app.formatter.loads(message=data)
             msg.parse_labels()
@@ -202,11 +202,11 @@ class AppReceiver(Receiver):
             await ack.ack()
             return
 
-        if delivery is not None and options.concurrency_key:
+        if delivery is not None and options.key and options.max_tasks_per_key:
             try:
                 key = key_text(
                     extract_argument(
-                        options.concurrency_key,
+                        options.key,
                         task.original_func,
                         msg.args,
                         msg.kwargs,
@@ -214,10 +214,10 @@ class AppReceiver(Receiver):
                 )
             except (KeyError, IndexError, ValueError, TypeError):
                 logger.warning(
-                    "Task %s: concurrency_key %r not found in the call; running "
+                    "Task %s: key %r not found in the call; running "
                     "without a key slot.",
                     msg.task_name,
-                    options.concurrency_key,
+                    options.key,
                 )
             else:
                 if not await self.app.engine.acquire_key(delivery, options, key):

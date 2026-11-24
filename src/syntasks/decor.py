@@ -1,6 +1,8 @@
+import os
 import sys
 from collections.abc import Callable, Coroutine
 from copy import copy
+from functools import wraps
 from types import CoroutineType
 from typing import (
     TYPE_CHECKING,
@@ -8,8 +10,10 @@ from typing import (
     Generic,
     ParamSpec,
     TypeVar,
+    get_type_hints,
     overload,
 )
+from uuid import uuid4
 
 from syntasks.kicker import AsyncKicker
 from syntasks.task import AsyncSynTasksTask
@@ -165,3 +169,53 @@ class AsyncSynTasksDecoratedTask(Generic[_FuncParams, _ReturnType]):
 
     def __repr__(self) -> str:
         return f"AsyncSynTasksDecoratedTask({self.task_name})"
+
+
+def default_task_name(func: Callable[..., Any]) -> str:
+    """
+    The name a task gets when none is given: ``module:function``.
+
+    :param func: task function.
+    :return: name.
+    """
+    fmodule = func.__module__
+    if fmodule == "__main__":  # pragma: no cover
+        fmodule = ".".join(
+            os.path.normpath(sys.argv[0]).removesuffix(".py").split(os.path.sep),
+        )
+    fname = func.__name__
+    if fname == "<lambda>":
+        fname = f"lambda_{uuid4().hex}"
+    return f"{fmodule}:{fname}"
+
+
+def build_decorated_task(
+    broker: Any,
+    func: Callable[..., Any],
+    task_name: str | None,
+    labels: dict[str, Any],
+    decorator_class: type[
+        AsyncSynTasksDecoratedTask[Any, Any]
+    ] = AsyncSynTasksDecoratedTask,
+) -> AsyncSynTasksDecoratedTask[Any, Any]:
+    """
+    Wrap a function in a decorated task (without registering it).
+
+    :param broker: broker the task sends through (or a stand-in).
+    :param func: task function.
+    :param task_name: name, or None for :func:`default_task_name`.
+    :param labels: labels of every message.
+    :param decorator_class: class of the result.
+    :return: decorated task.
+    """
+    name = task_name or default_task_name(func)
+    return_type = get_type_hints(func).get("return")
+    return wraps(func)(  # type: ignore[return-value]
+        decorator_class(
+            broker=broker,
+            original_func=func,
+            labels=labels,
+            task_name=name,
+            return_type=return_type,
+        ),
+    )

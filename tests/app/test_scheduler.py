@@ -1,4 +1,5 @@
 import asyncio
+from typing import Annotated
 
 import pytest
 
@@ -340,3 +341,14 @@ async def test_invalid_schedule_marked(app_factory: AppFactory) -> None:
     schedule = await app.schedules.get("big")
     assert schedule.state == "invalid"
     assert "max_payload" in (schedule.invalid_reason or "")
+
+
+async def test_schedule_args_skip_annotated_dependencies(
+    app_factory: AppFactory,
+) -> None:
+    app = app_factory(fast)
+
+    @app.task(schedule=every("1s", kwargs={"x": 1}, id="annotated"))
+    async def job(x: int, info: Annotated[ScheduleInfo, Depends()]) -> None: ...
+
+    app.schedules.validate_declared()

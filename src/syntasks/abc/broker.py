@@ -1,10 +1,7 @@
-import os
-import sys
 import warnings
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from functools import wraps
 from logging import getLogger
 from typing import (
     TYPE_CHECKING,
@@ -14,7 +11,6 @@ from typing import (
     Self,
     TypeAlias,
     TypeVar,
-    get_type_hints,
     overload,
 )
 from uuid import uuid4
@@ -22,7 +18,7 @@ from uuid import uuid4
 from syntasks.abc.middleware import SynTasksMiddleware
 from syntasks.abc.serializer import SynTasksSerializer
 from syntasks.acks import AckableMessage
-from syntasks.decor import AsyncSynTasksDecoratedTask
+from syntasks.decor import AsyncSynTasksDecoratedTask, build_decorated_task
 from syntasks.events import SynTasksEvents
 from syntasks.exceptions import TaskBrokerMismatchError
 from syntasks.formatters.proxy_formatter import ProxyFormatter
@@ -308,39 +304,15 @@ class AsyncBroker(ABC):
             def inner(
                 func: Callable[_FuncParams, _ReturnType],
             ) -> AsyncSynTasksDecoratedTask[_FuncParams, _ReturnType]:
-                nonlocal inner_task_name
-                if inner_task_name is None:
-                    fmodule = func.__module__
-                    if fmodule == "__main__":  # pragma: no cover
-                        fmodule = ".".join(
-                            os.path.normpath(sys.argv[0])
-                            .removesuffix(".py")
-                            .split(os.path.sep),
-                        )
-                    fname = func.__name__
-                    if fname == "<lambda>":
-                        fname = f"lambda_{uuid4().hex}"
-                    inner_task_name = f"{fmodule}:{fname}"
-                wrapper = wraps(func)
-
-                sign = get_type_hints(func)
-                return_type = None
-                if "return" in sign:
-                    return_type = sign["return"]
-
-                decorated_task = wrapper(
-                    self.decorator_class(
-                        broker=self,
-                        original_func=func,
-                        labels=inner_labels,
-                        task_name=inner_task_name,
-                        return_type=return_type,  # type: ignore
-                    ),
+                decorated_task = build_decorated_task(
+                    self,
+                    func,
+                    inner_task_name,
+                    inner_labels,
+                    self.decorator_class,
                 )
-
-                self._register_task(decorated_task.task_name, decorated_task)  # type: ignore
-
-                return decorated_task  # type: ignore
+                self._register_task(decorated_task.task_name, decorated_task)
+                return decorated_task
 
             return inner
 

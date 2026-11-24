@@ -22,7 +22,6 @@ __all__ = [
     "SchedulerConfig",
     "SentinelConfig",
     "TaskConfig",
-    "TaskDefaults",
     "WorkerConfig",
 ]
 
@@ -139,6 +138,11 @@ class WorkerConfig:
         0,
         doc="Stop the worker after this many crash restarts (0 = never).",
     )
+    max_startup_failures: int = setting(
+        5,
+        doc="Stop after this many worker processes in a row fail before they "
+        "are ready (0 = never).",
+    )
     loop: Literal["auto", "asyncio", "uvloop"] = setting(
         "auto",
         doc="Event loop; 'auto' uses uvloop if installed.",
@@ -183,77 +187,12 @@ class NodeConfig:
 
 
 @dataclass(kw_only=True)
-class TaskDefaults:
-    """``[defaults]``: options every task starts from (cluster scope)."""
-
-    queue: str = setting("default", doc="Queue.", scope="cluster")
-    priority: int = setting(0, doc="Priority (0 = highest).", scope="cluster")
-    timeout: float | None = setting(
-        None,
-        unit="duration",
-        doc="Hard time limit of one run.",
-        scope="cluster",
-    )
-    grace: float = setting(
-        30.0,
-        unit="duration",
-        doc="Cleanup time after the timeout before the run is killed.",
-        scope="cluster",
-    )
-    soft_timeout: float | None = setting(
-        None,
-        unit="duration",
-        doc="Warn the task (Deadline) at this time.",
-        scope="cluster",
-    )
-    max_payload: int = setting(
-        256 * 1024,
-        unit="size",
-        doc="Max size of one task message.",
-        scope="cluster",
-    )
-    max_result: int | None = setting(
-        None,
-        unit="size",
-        doc="Max size of a stored result.",
-        scope="cluster",
-    )
-    retries: int = setting(0, doc="Retries after an exception.", scope="cluster")
-    retry_delay: float = setting(
-        1.0,
-        unit="duration",
-        doc="First retry delay.",
-        scope="cluster",
-    )
-    retry_backoff: float = setting(
-        2.0,
-        doc="Retry delay multiplier per attempt (1 = fixed).",
-        scope="cluster",
-    )
-    retry_max_delay: float = setting(
-        300.0,
-        unit="duration",
-        doc="Max retry delay.",
-        scope="cluster",
-    )
-    retry_jitter: bool = setting(True, doc="Randomize retry delays.", scope="cluster")
-    result_ttl: float | None = setting(
-        86400.0,
-        unit="duration",
-        doc="How long results are kept.",
-        scope="cluster",
-    )
-    store_result: bool = setting(True, doc="Store results.", scope="cluster")
-    dead_letter: bool = setting(
-        True,
-        doc="Move finally failed messages to the queue's dead letters.",
-        scope="cluster",
-    )
-
-
-@dataclass(kw_only=True)
 class TaskConfig:
-    """``[tasks."module:function"]``: per-task options (cluster scope)."""
+    """
+    Options of a task, a :class:`~syntasks.Module` or the app, set in code.
+
+    Unset options are None. Not part of the TOML file.
+    """
 
     queue: str | None = setting(doc="Queue.", scope="cluster")
     priority: int | None = setting(doc="Priority (0 = highest).", scope="cluster")
@@ -268,19 +207,19 @@ class TaskConfig:
         doc="Soft time limit.",
         scope="cluster",
     )
-    concurrency: int | None = setting(
+    max_tasks: int | None = setting(
         doc="Runs at once across all machines.",
         scope="cluster",
     )
-    node_concurrency: int | None = setting(
-        doc="Runs at once per machine.",
+    max_tasks_per_node: int | None = setting(
+        doc="Runs at once per worker process.",
         scope="cluster",
     )
-    concurrency_key: str | None = setting(
+    key: str | None = setting(
         doc="Argument that groups runs, e.g. 'kwargs.customer_id' or 'args.0'.",
         scope="cluster",
     )
-    key_concurrency: int | None = setting(
+    max_tasks_per_key: int | None = setting(
         doc="Runs at once per key (1 = strict order per key).",
         scope="cluster",
     )
@@ -353,7 +292,7 @@ class TaskConfig:
 
 @dataclass(kw_only=True)
 class QueueConfig:
-    """``[queues.<name>]`` (cluster scope)."""
+    """Options of a queue, declared in code with ``app.queue(name, ...)``."""
 
     priorities: int = setting(1, doc="Priority levels.", scope="cluster")
     max_length: int | None = setting(doc="Max waiting messages.", scope="cluster")
@@ -534,9 +473,6 @@ class Config:
     redis: RedisConfig = field(default_factory=RedisConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     node: NodeConfig = field(default_factory=NodeConfig)
-    defaults: TaskDefaults = field(default_factory=TaskDefaults)
-    tasks: dict[str, TaskConfig] = field(default_factory=dict)
-    queues: dict[str, QueueConfig] = field(default_factory=dict)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     schedules: dict[str, ScheduleConfig] = field(default_factory=dict)
     channels: ChannelsConfig = field(default_factory=ChannelsConfig)
@@ -555,12 +491,3 @@ class Config:
         compare=False,
         metadata={"internal": True},
     )
-
-    def queue(self, name: str) -> QueueConfig:
-        """
-        Settings of a queue (defaults if not configured).
-
-        :param name: queue name.
-        :return: queue settings.
-        """
-        return self.queues.get(name) or QueueConfig()

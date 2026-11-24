@@ -8,9 +8,9 @@ Example::
 
     from syntasks import SynTasks
 
-    app = SynTasks()  # reads syntasks.toml if present
+    app = SynTasks(timeout="5m", retries=0, max_tasks=None)  # + syntasks.toml
 
-    @app.task(timeout="30s", retries=3)
+    @app.task(timeout="30s", retries=3, max_tasks=20)
     async def charge(customer_id: str, cents: int) -> None: ...
 
 Run workers with ``syntasks worker``.
@@ -20,21 +20,17 @@ import asyncio
 import os
 import weakref
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from syntasks.abc.broker import AsyncBroker
 from syntasks.cluster import Cluster, NodeInfo
-from syntasks.config import Config, ConfigError, TaskConfig, load_config
-from syntasks.config.schema import RedisConfig
+from syntasks.config import Config, ConfigError, load_config
+from syntasks.config.schema import QueueConfig, RedisConfig
 from syntasks.decor import AsyncSynTasksDecoratedTask
 from syntasks.kicker import AsyncKicker
 from syntasks.message import BrokerMessage
-from syntasks.options import (
-    OPTION_NAMES,
-    TaskOptions,
-    parse_code_options,
-    resolve_options,
-)
+from syntasks.modules import Declarations
+from syntasks.options import OptionLayer, TaskOptions, resolve_chain
 from syntasks.queues import QueueEngine, QueueManager
 from syntasks.redis.client import Redis
 from syntasks.redis.connection import ConnectionOptions
@@ -48,9 +44,6 @@ if TYPE_CHECKING:  # pragma: no cover
     from syntasks.acks import AckableMessage
 
 __all__ = ["SynTasks", "create_redis"]
-
-_FuncParams = ParamSpec("_FuncParams")
-_ReturnType = TypeVar("_ReturnType")
 
 
 def create_redis(config: RedisConfig) -> Redis:
@@ -91,7 +84,7 @@ def create_redis(config: RedisConfig) -> Redis:
     return Redis(ConnectionPool(options, max_connections=config.pool_size))
 
 
-class SynTasks(AsyncBroker):
+class SynTasks(Declarations, AsyncBroker):  # type: ignore[misc]
     """
     A SynTasks application.
 
@@ -102,6 +95,9 @@ class SynTasks(AsyncBroker):
     :param profile: config profile to apply.
     :param redis: share an existing Redis client.
     :param search_config: look for a config file when ``config`` is None.
+    :param options: task options every task, schedule and channel starts
+        from (the root of the module chain), e.g. ``timeout="5m",
+        retries=0, max_tasks=None``.
     """
 
     _instances: ClassVar["weakref.WeakSet[SynTasks]"] = weakref.WeakSet()
@@ -116,8 +112,10 @@ class SynTasks(AsyncBroker):
         profile: str | None = None,
         redis: Redis | None = None,
         search_config: bool = True,
+        **options: Any,
     ) -> None:
         super().__init__()
+        self._init_declarations("SynTasks()", options)
         if isinstance(config, Config):
             resolved = config
         else:
@@ -135,8 +133,12 @@ class SynTasks(AsyncBroker):
             dead_after_ms=int(resolved.node.dead_after * 1000),
         )
         self.keys = self.cluster.keys
-        self._code_options: dict[str, TaskConfig] = {}
+        # Option chain of every task declared in code, by name.
+        self.declared_tasks: dict[str, list[OptionLayer]] = {}
         self._options_cache: dict[str, TaskOptions] = {}
+        # Options adopted from a newer deploy's manifest (see config.cluster).
+        self.adopted_options: dict[str, TaskOptions] = {}
+        self.declared_queues: dict[str, QueueConfig] = {}
         self.engine = QueueEngine(self)
         self.queues = QueueManager(self)
         self.result_backend = AppResultBackend(self)
@@ -160,75 +162,78 @@ class SynTasks(AsyncBroker):
     def __repr__(self) -> str:
         return f"<SynTasks {self.config.app.name!r} {len(self.get_all_tasks())} tasks>"
 
-    # -- tasks -----------------------------------------------------------
+    # -- declarations (see syntasks.modules) ------------------------------
 
-    @overload
-    def task(
+    def _broker_for_tasks(self) -> Any:
+        return self
+
+    def _declare_task(
         self,
-        task_name: Callable[_FuncParams, _ReturnType],
-        **kwargs: Any,
-    ) -> AsyncSynTasksDecoratedTask[_FuncParams, _ReturnType]:  # pragma: no cover
-        ...
+        task: AsyncSynTasksDecoratedTask[Any, Any],
+        layer: OptionLayer,
+    ) -> None:
+        self.register_declared(task, [self.layer, layer])
 
-    @overload
-    def task(
+    def _extend(self, module: Any) -> None:
+        module.attach_to(self, [self.layer])
+
+    def register_declared(
         self,
-        task_name: str | None = None,
-        **kwargs: Any,
-    ) -> Callable[
-        [Callable[_FuncParams, _ReturnType]],
-        AsyncSynTasksDecoratedTask[_FuncParams, _ReturnType],
-    ]:  # pragma: no cover
-        ...
+        task: AsyncSynTasksDecoratedTask[Any, Any],
+        chain: list[OptionLayer],
+    ) -> None:
+        """Register a task declared on this app or an attached module."""
+        name = task.task_name
+        existing = self.local_task_registry.get(name)
+        if existing is not None and existing is not task:
+            raise ConfigError(detail=f"Two tasks are named {name!r}.")
+        options = resolve_chain(chain, what=name)
+        self.declared_tasks[name] = chain
+        self._options_cache[name] = options
+        task.broker = self
+        self._register_task(name, task)
+        schedule = getattr(task, "pending_schedule", None)
+        if schedule is not None:
+            self.schedules.declare(name, schedule)
 
-    def task(  # type: ignore[misc]
+    def _declare_queue(self, name: str, options: QueueConfig) -> None:
+        self.declare_queue(name, options)
+
+    def declare_queue(self, name: str, options: QueueConfig) -> None:
+        """Register a queue declared on this app or an attached module."""
+        existing = self.declared_queues.get(name)
+        if existing is not None and existing != options:
+            raise ConfigError(
+                detail=f"Queue {name!r} is declared twice with different options.",
+            )
+        self.declared_queues[name] = options
+
+    def _declare_channel(
         self,
-        task_name: str | Callable[..., Any] | None = None,
-        **kwargs: Any,
-    ) -> Any:
+        pattern: str,
+        func: Callable[..., Any],
+        options: dict[str, Any],
+    ) -> None:
+        self.register_channel(pattern, func, options, [self.layer])
+
+    def register_channel(
+        self,
+        pattern: str,
+        func: Callable[..., Any],
+        options: dict[str, Any],
+        chain: list[OptionLayer],
+    ) -> None:
+        """Register a channel handler declared here or in an attached module."""
+        self.channels.handler(pattern, **options)(func)
+
+    def queue_options(self, name: str) -> QueueConfig:
         """
-        Turn a function into a task.
+        Options of a queue (defaults if it wasn't declared).
 
-        Keyword arguments that are task options (``queue``, ``timeout``,
-        ``retries``, ``concurrency``, ``rate``, ... see
-        :class:`syntasks.config.TaskConfig`) configure the task; ``schedule``
-        attaches schedules; anything else becomes a label.
-
-        :param task_name: custom name (default ``module:function``).
-        :param kwargs: options, ``schedule`` and labels.
-        :return: decorated task, or a decorator.
+        :param name: queue name.
+        :return: queue options.
         """
-        schedule = kwargs.pop("schedule", None)
-        options = {k: kwargs.pop(k) for k in list(kwargs) if k in OPTION_NAMES}
-        hint = task_name if isinstance(task_name, str) else "<task>"
-        parsed = parse_code_options(hint, options)
-
-        def register(decorated: AsyncSynTasksDecoratedTask[Any, Any]) -> Any:
-            self._code_options[decorated.task_name] = parsed
-            self._options_cache.pop(decorated.task_name, None)
-            self.options_for(decorated.task_name)  # validate the combination
-            if schedule is not None:
-                self.schedules.declare(decorated.task_name, schedule)
-            return decorated
-
-        if callable(task_name):
-            return register(super().task(task_name, **kwargs))
-        decorator = super().task(task_name, **kwargs)
-
-        def inner(func: Callable[..., Any]) -> Any:
-            return register(decorator(func))
-
-        return inner
-
-    def channel(self, pattern: str, **options: Any) -> Any:
-        """
-        Register a long-running channel handler (see :mod:`syntasks.channels`).
-
-        :param pattern: channel name pattern, e.g. ``"room:{room_id}"``.
-        :param options: ``idle_timeout``, ``max_lifetime``, ``max_restarts``.
-        :return: decorator.
-        """
-        return self.channels.handler(pattern, **options)
+        return self.declared_queues.get(name) or QueueConfig()
 
     def options_for(self, task_name: str) -> TaskOptions:
         """
@@ -237,19 +242,23 @@ class SynTasks(AsyncBroker):
         :param task_name: task name.
         :return: options.
         """
+        adopted = self.adopted_options.get(task_name)
+        if adopted is not None:
+            return adopted
         cached = self._options_cache.get(task_name)
         if cached is None:
-            cached = resolve_options(
-                self.config.defaults,
-                self._code_options.get(task_name),
-                self.config.tasks.get(task_name),
-            )
+            chain = self.declared_tasks.get(task_name, [self.layer])
+            cached = resolve_chain(chain, what=task_name, required=False)
             self._options_cache[task_name] = cached
         return cached
 
     def reload_options(self) -> None:
-        """Forget cached task options (after the config changed)."""
-        self._options_cache.clear()
+        """Forget cached options of tasks that aren't declared here."""
+        self._options_cache = {
+            name: options
+            for name, options in self._options_cache.items()
+            if name in self.declared_tasks
+        }
 
     def send(self, task_name: str, *args: Any, **kwargs: Any) -> Any:
         """

@@ -15,7 +15,6 @@ from syntasks.config.schema import (
     SchedulerConfig,
     SentinelConfig,
     TaskConfig,
-    TaskDefaults,
     WorkerConfig,
 )
 
@@ -33,7 +32,6 @@ __all__ = [
     "SchedulerConfig",
     "SentinelConfig",
     "TaskConfig",
-    "TaskDefaults",
     "WorkerConfig",
     "build",
     "dump_config",

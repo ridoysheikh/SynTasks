@@ -216,6 +216,15 @@ lint.mccabe = { max-complexity = 10 }
   "S101",  # use of asserts detected
   "T201"  # print found
 ]
+"test-preview/**/*" = [
+  "E501",  # walkthrough prose
+  "D103",  # Missing docstring in public function
+  "D101",  # Missing docstring in public class
+  "D102",  # Missing docstring in public method
+  "S311",  # Standard pseudo-random generators
+  "S101",  # use of asserts detected
+  "T201"  # print found
+]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = [

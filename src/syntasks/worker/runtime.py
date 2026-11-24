@@ -44,6 +44,8 @@ logger = logging.getLogger("syntasks.worker")
 
 # Exit code asking the supervisor for a fresh process (memory, tainted).
 EXIT_RECYCLE = 75
+# A worker process that failed before it was ready to take work.
+EXIT_STARTUP_FAILED = 78
 _CONSUMER_CLEANUP_EVERY = 60.0
 
 
@@ -140,13 +142,7 @@ class WorkerRuntime:
         )
         await app.startup()
         try:
-            if await publish_cluster_config(
-                app.redis,
-                app.keys("cfg", "cluster"),
-                config,
-                app.cluster.node_id,
-            ):
-                app.reload_options()
+            await publish_cluster_config(app)
             await app.engine.ensure_groups()
             await app.schedules.sync_static()
             await app.cluster.nodes.beat(self.node_info())

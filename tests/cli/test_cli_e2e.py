@@ -17,9 +17,9 @@ from syntasks.config import load_config
 APP = """
 from syntasks import SynTasks, every
 
-app = SynTasks()
+app = SynTasks(timeout="1m", retries=0, max_tasks=None)
 
-@app.task(retries=0)
+@app.task(timeout="5s")
 async def add(a: int, b: int) -> int:
     return a + b
 
@@ -51,8 +51,6 @@ def _project(tmp_path: Path, redis_url: str) -> Path:
             max_sleep = "100ms"
             min_interval = "100ms"
 
-            [tasks."e2e_app:add"]
-            timeout = "5s"
             """,
         ),
     )
@@ -74,7 +72,7 @@ async def test_worker_and_management_commands(tmp_path: Path, redis_url: str) ->
     project = _project(tmp_path, redis_url)
     show = _cli(project, "config", "show", "--sources")
     assert show.returncode == 0, show.stderr
-    assert 'timeout = "5s"  # file:syntasks.toml' in show.stdout
+    assert "processes = 2  # file:syntasks.toml" in show.stdout
     check = _cli(project, "config", "check")
     assert check.returncode == 0, check.stdout + check.stderr
     assert "app: e2e (2 tasks)" in check.stdout
@@ -132,3 +130,43 @@ def test_config_errors_are_clean(tmp_path: Path, args: list[str]) -> None:
     assert result.returncode == 1
     assert "error: Config file" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+BROKEN_APP = """
+from syntasks import SynTasks, SynTasksEvents
+
+app = SynTasks(timeout=None, retries=0, max_tasks=None)
+
+@app.on_event(SynTasksEvents.WORKER_STARTUP)
+async def explode(state) -> None:
+    raise RuntimeError("database is unreachable")
+"""
+
+
+def test_supervisor_stops_after_failed_startups(
+    tmp_path: Path, redis_server: str
+) -> None:
+    (tmp_path / "broken_app.py").write_text(BROKEN_APP)
+    (tmp_path / "syntasks.toml").write_text(
+        textwrap.dedent(
+            f"""
+            [app]
+            name = "broken"
+            app = "broken_app:app"
+
+            [redis]
+            url = "{redis_server}"
+
+            [worker]
+            processes = 1
+            max_startup_failures = 2
+            """,
+        ),
+    )
+    started = time.monotonic()
+    result = _cli(tmp_path, "worker")
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "database is unreachable" in output
+    assert "failed to start 2 times in a row" in output
+    assert time.monotonic() - started < 30

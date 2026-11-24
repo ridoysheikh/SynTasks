@@ -193,12 +193,12 @@ class AppResultBackend(RedisResultBackend[Any]):
 
     async def set_result(self, task_id: str, result: SynTasksResult[Any]) -> None:
         """
-        Save a result with the default TTL.
+        Save a result with the app's default TTL.
 
         :param task_id: task id.
         :param result: result.
         """
-        await self.store(task_id, result, ttl=self.app.config.defaults.result_ttl)
+        await self.store(task_id, result, ttl=self.app.options_for("").result_ttl)
 
     async def wait(self, task_id: str, timeout: float | None) -> bool:
         """

@@ -186,7 +186,7 @@ class QueueEngine:
         queue = str(labels.get("queue") or options.queue)
         if self.dedicated(options):
             return queue, self.task_stream_key(queue, task_name), options
-        levels = self.app.config.queue(queue).priorities
+        levels = self.app.queue_options(queue).priorities
         try:
             priority = int(labels.get("priority", options.priority))
         except (TypeError, ValueError):
@@ -232,7 +232,7 @@ class QueueEngine:
             max_bytes=options.max_payload,
             what=f"Message of task {message.task_name}",
         )
-        queue_config = self.app.config.queue(queue)
+        queue_config = self.app.queue_options(queue)
         delay_ms = ""
         raw_delay = message.labels.get("delay")
         if raw_delay not in (None, "", 0, "0"):
@@ -323,7 +323,7 @@ class QueueEngine:
         for queue in self.queues:
             if queue in self._paused:
                 continue
-            for level in range(self.app.config.queue(queue).priorities):
+            for level in range(self.app.queue_options(queue).priorities):
                 streams.append((queue, self.stream_key(queue, level)))
         return streams
 
@@ -342,10 +342,8 @@ class QueueEngine:
         return result
 
     def node_limit(self, options: TaskOptions) -> int | None:
-        """Per-process share of a task's per-machine limit."""
-        if not options.node_concurrency:
-            return None
-        return max(math.ceil(options.node_concurrency / self.processes), 1)
+        """A task's limit per worker process (a node)."""
+        return options.max_tasks_per_node or None
 
     async def ensure_groups(self) -> None:
         """Create the consumer group on every stream this process reads."""
@@ -435,7 +433,7 @@ class QueueEngine:
         options: TaskOptions,
         now: float,
     ) -> Delivery | None:
-        queue_config = self.app.config.queue(options.queue)
+        queue_config = self.app.queue_options(options.queue)
         holder = self.app.cluster.holder(uuid.uuid4().hex)
         claim = ""
         if now >= self._next_gated_claim.get(name, 0.0):
@@ -455,7 +453,7 @@ class QueueEngine:
                 self.group,
                 self.consumer,
                 holder,
-                "" if options.concurrency is None else options.concurrency,
+                "" if options.max_tasks is None else options.max_tasks,
                 self.slot_ttl_ms,
                 "" if options.rate is None else repr(options.rate.emission_ms),
                 options.rate.burst if options.rate else 1,
@@ -483,14 +481,14 @@ class QueueEngine:
         )
         if delivery is None:
             await scripts.ACK(self.redis, [stream], [self.group, reply[1]])
-            if options.concurrency is not None:
+            if options.max_tasks is not None:
                 await SEM_RELEASE(
                     self.redis,
                     [self.keys("lim", "sem", semaphore), self.task_wake_key(name)],
                     [holder],
                 )
             return None
-        if options.concurrency is not None:
+        if options.max_tasks is not None:
             delivery.cluster_holder = holder
         delivery.local_task = name
         self._local_running[name] += 1
@@ -540,7 +538,7 @@ class QueueEngine:
 
     async def _claim_plain(self, streams: list[tuple[str, str]]) -> None:
         for queue, stream in streams:
-            queue_config = self.app.config.queue(queue)
+            queue_config = self.app.queue_options(queue)
             reply = await scripts.CLAIM_ABANDONED(
                 self.redis,
                 [stream, self.dlq_key(queue)],
@@ -729,7 +727,7 @@ class QueueEngine:
             delivery,
             f"key:{delivery.task_name}:{key}",
             self.keys("q", "park", delivery.task_name, key),
-            options.key_concurrency or 1,
+            options.max_tasks_per_key or 1,
             "park",
         )
 
@@ -897,7 +895,7 @@ class QueueEngine:
                 reason,
                 error[:4000],
                 queue,
-                self.app.config.queue(queue).dead_letter_max,
+                self.app.queue_options(queue).dead_letter_max,
             ],
         )
 

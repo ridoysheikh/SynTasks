@@ -25,10 +25,11 @@ import logging
 import uuid
 import zlib
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, get_type_hints
+from typing import TYPE_CHECKING, Annotated, Any, get_args, get_origin, get_type_hints
 
 from syntasks.codec import ConversionError, convert
 from syntasks.config.schema import ScheduleConfig
+from syntasks.dependencies.dependency import Dependency
 from syntasks.exceptions import SynTasksError
 from syntasks.limits import dumps_bounded
 from syntasks.message import SynTasksMessage
@@ -80,6 +81,35 @@ _POLICY_NAMES = {
     "pause_after_failures",
     "paused",
 }
+
+
+def _is_dependency(parameter: inspect.Parameter, hint: Any) -> bool:
+    if isinstance(parameter.default, Dependency):
+        return True
+    if get_origin(hint) is Annotated:
+        return any(isinstance(meta, Dependency) for meta in get_args(hint)[1:])
+    return False
+
+
+def call_signature(func: Any) -> inspect.Signature:
+    """
+    The parameters a caller passes: the signature without dependencies.
+
+    :param func: task function.
+    :return: signature without injected parameters.
+    """
+    signature = inspect.signature(func)
+    try:
+        hints = get_type_hints(func, include_extras=True)
+    except (NameError, TypeError):
+        hints = {}
+    return signature.replace(
+        parameters=[
+            p
+            for p in signature.parameters.values()
+            if not _is_dependency(p, hints.get(p.name))
+        ],
+    )
 
 
 class ScheduleError(SynTasksError, ValueError):
@@ -218,7 +248,7 @@ class ScheduleManager:
             return
         func = task.original_func
         try:
-            signature = inspect.signature(func)
+            signature = call_signature(func)
             hints = get_type_hints(func)
             bound = signature.bind(*spec.args, **spec.kwargs)
         except TypeError as exc:

@@ -2,7 +2,7 @@ import logging
 
 from syntasks import SynTasks, every
 
-app = SynTasks()  # reads syntasks.toml
+app = SynTasks(timeout="5m", retries=0, max_tasks=None)  # + syntasks.toml
 logger = logging.getLogger(__name__)
 
 

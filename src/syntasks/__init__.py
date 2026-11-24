@@ -40,6 +40,7 @@ from syntasks.middlewares import (
     SimpleRetryMiddleware,
     SmartRetryMiddleware,
 )
+from syntasks.modules import Module, ModuleNotAttachedError
 from syntasks.redis import (
     Redis,
     RedisListBroker,
@@ -77,6 +78,8 @@ __all__ = [
     "Depends",
     "DuplicateTaskError",
     "InMemoryBroker",
+    "Module",
+    "ModuleNotAttachedError",
     "MultiBroker",
     "NoResultError",
     "PayloadInvalidError",

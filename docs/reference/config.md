@@ -50,6 +50,7 @@ Scope: **node** settings describe one machine; **cluster** settings must be the 
 | `memory_check_interval` | duration | `"5s"` | node | How often memory is checked. |
 | `max_tasks_per_process` | int | `0` | node | Restart a process after this many tasks (0 = never). |
 | `max_restarts` | int | `0` | node | Stop the worker after this many crash restarts (0 = never). |
+| `max_startup_failures` | int | `5` | node | Stop after this many worker processes in a row fail before they are ready (0 = never). |
 | `loop` | Literal['auto', 'asyncio', 'uvloop'] | `"auto"` | node | Event loop; 'auto' uses uvloop if installed. |
 | `loop_block_warn` | duration | `"1s"` | node | Log a stack trace when the event loop is blocked this long. |
 | `loop_block_kill` | duration | `"0s"` | node | Restart the process when the loop is blocked this long (0 = off). |
@@ -63,68 +64,6 @@ Scope: **node** settings describe one machine; **cluster** settings must be the 
 |---|---|---|---|---|
 | `heartbeat` | duration | `"5s"` | node | Heartbeat interval. |
 | `dead_after` | duration | `"30s"` | cluster | A node without heartbeat this long is dead. |
-
-## `[defaults]`
-
-| Setting | Type | Default | Scope | Description |
-|---|---|---|---|---|
-| `queue` | str | `"default"` | cluster | Queue. |
-| `priority` | int | `0` | cluster | Priority (0 = highest). |
-| `timeout` | duration | - | cluster | Hard time limit of one run. |
-| `grace` | duration | `"30s"` | cluster | Cleanup time after the timeout before the run is killed. |
-| `soft_timeout` | duration | - | cluster | Warn the task (Deadline) at this time. |
-| `max_payload` | size | `262144` | cluster | Max size of one task message. |
-| `max_result` | size | - | cluster | Max size of a stored result. |
-| `retries` | int | `0` | cluster | Retries after an exception. |
-| `retry_delay` | duration | `"1s"` | cluster | First retry delay. |
-| `retry_backoff` | float | `2.0` | cluster | Retry delay multiplier per attempt (1 = fixed). |
-| `retry_max_delay` | duration | `"5m"` | cluster | Max retry delay. |
-| `retry_jitter` | bool | `true` | cluster | Randomize retry delays. |
-| `result_ttl` | duration | `"1d"` | cluster | How long results are kept. |
-| `store_result` | bool | `true` | cluster | Store results. |
-| `dead_letter` | bool | `true` | cluster | Move finally failed messages to the queue's dead letters. |
-
-## `[tasks."module:function"]`
-
-| Setting | Type | Default | Scope | Description |
-|---|---|---|---|---|
-| `queue` | str | - | cluster | Queue. |
-| `priority` | int | - | cluster | Priority (0 = highest). |
-| `timeout` | duration | - | cluster | Hard time limit. |
-| `grace` | duration | - | cluster | Cleanup time. |
-| `soft_timeout` | duration | - | cluster | Soft time limit. |
-| `concurrency` | int | - | cluster | Runs at once across all machines. |
-| `node_concurrency` | int | - | cluster | Runs at once per machine. |
-| `concurrency_key` | str | - | cluster | Argument that groups runs, e.g. 'kwargs.customer_id' or 'args.0'. |
-| `key_concurrency` | int | - | cluster | Runs at once per key (1 = strict order per key). |
-| `rate` | rate | - | cluster | Rate limit, e.g. '100/s'. |
-| `rate_burst` | int | - | cluster | Rate limit burst. |
-| `retries` | int | - | cluster | Retries after an exception. |
-| `retry_delay` | duration | - | cluster | First retry delay. |
-| `retry_backoff` | float | - | cluster | Retry multiplier. |
-| `retry_max_delay` | duration | - | cluster | Max retry delay. |
-| `retry_jitter` | bool | - | cluster | Randomize retry delays. |
-| `max_payload` | size | - | cluster | Max message size. |
-| `max_result` | size | - | cluster | Max result size. |
-| `isolation` | Optional[Literal['none', 'process']] | - | cluster | 'process' runs each call in a child process (hard kill, memory limit). |
-| `memory_limit` | size | - | cluster | Memory limit of an isolated run. |
-| `capture_logs` | bool | - | cluster | Capture this task's logs. |
-| `unique_for` | duration | - | cluster | Drop identical kicks within this window. |
-| `unique_key` | str | - | cluster | Argument used for uniqueness instead of all arguments. |
-| `tags` | list[str] | - | cluster | Only machines with these tags run it. |
-| `result_ttl` | duration | - | cluster | Result TTL. |
-| `store_result` | bool | - | cluster | Store results. |
-| `dead_letter` | bool | - | cluster | Dead-letter final failures. |
-
-## `[queues.<name>]`
-
-| Setting | Type | Default | Scope | Description |
-|---|---|---|---|---|
-| `priorities` | int | `1` | cluster | Priority levels. |
-| `max_length` | int | - | cluster | Max waiting messages. |
-| `on_full` | Literal['reject', 'drop_oldest'] | `"reject"` | cluster | What a kick does when the queue is full. |
-| `max_deliveries` | int | `5` | cluster | Deliveries (worker crashes) before a message is dead-lettered. |
-| `dead_letter_max` | int | `10000` | cluster | Dead letters kept per queue. |
 
 ## `[scheduler]`
 

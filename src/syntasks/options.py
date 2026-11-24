@@ -1,30 +1,41 @@
 """
-Per-task options: resolved from defaults, decorator arguments and config.
+Task options: layers set in code, resolved along the module chain.
 
-Precedence (low → high): library defaults → ``[defaults]`` in config →
-decorator arguments → ``[tasks."<name>"]`` in config.
+Every task sits in a chain ``SynTasks(...) → Module(...) → ... → @task(...)``.
+Each link is an :class:`OptionLayer`; the nearest link that sets an option
+wins. ``timeout``, ``retries`` and ``max_tasks`` are required: some link must
+set them (``None`` is an explicit "unbounded").
 """
 
 import dataclasses
+import difflib
 import inspect
 import json
 import random
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from syntasks.config.loader import ConfigError, build
-from syntasks.config.schema import TaskConfig, TaskDefaults
+from syntasks.config.schema import TaskConfig
 from syntasks.units import Rate, parse_rate
 
 __all__ = [
     "OPTION_NAMES",
+    "REQUIRED",
+    "MissingLimitError",
+    "OptionLayer",
     "TaskOptions",
     "extract_argument",
-    "parse_code_options",
-    "resolve_options",
+    "parse_layer",
+    "resolve_chain",
 ]
 
 OPTION_NAMES = frozenset(f.name for f in dataclasses.fields(TaskConfig))
+REQUIRED = ("timeout", "retries", "max_tasks")
+
+
+class MissingLimitError(ConfigError):
+    """A task, schedule or channel doesn't set a required limit anywhere."""
 
 
 @dataclasses.dataclass(kw_only=True, frozen=True)
@@ -36,10 +47,10 @@ class TaskOptions:
     timeout: float | None = None
     grace: float = 30.0
     soft_timeout: float | None = None
-    concurrency: int | None = None
-    node_concurrency: int | None = None
-    concurrency_key: str | None = None
-    key_concurrency: int | None = None
+    max_tasks: int | None = None
+    max_tasks_per_node: int | None = None
+    key: str | None = None
+    max_tasks_per_key: int | None = None
     rate: Rate | None = None
     retries: int = 0
     retry_delay: float = 1.0
@@ -61,7 +72,7 @@ class TaskOptions:
     @property
     def gated(self) -> bool:
         """Whether the task needs a slot or rate check before it is fetched."""
-        return bool(self.concurrency or self.node_concurrency or self.rate)
+        return bool(self.max_tasks or self.max_tasks_per_node or self.rate)
 
     def retry_delay_for(self, attempt: int) -> float:
         """
@@ -79,54 +90,98 @@ class TaskOptions:
         return delay
 
 
-def parse_code_options(task_name: str, options: Mapping[str, Any]) -> TaskConfig:
-    """
-    Validate options given to ``@app.task(...)``.
+_NULLABLE = frozenset(
+    f.name
+    for f in dataclasses.fields(TaskOptions)
+    if f.default is None and f.name != "rate"
+) | {"rate", "rate_burst"}
 
-    :param task_name: task name, for error messages.
-    :param options: decorator keyword arguments that are task options.
-    :raises ConfigError: if an option is invalid.
-    :return: parsed options (unset ones are None).
+
+@dataclasses.dataclass(frozen=True)
+class OptionLayer:
     """
-    data = {k: (list(v) if isinstance(v, tuple) else v) for k, v in options.items()}
+    Options one link of a chain sets.
+
+    :param values: parsed options (unset ones are None).
+    :param explicit: names given at this link, including explicit ``None``.
+    :param owner: the link in error messages, e.g. ``'Module("billing")'``.
+    """
+
+    values: TaskConfig
+    explicit: frozenset[str]
+    owner: str
+
+    def as_dict(self) -> dict[str, Any]:
+        """The options this link sets, as plain data."""
+        return {
+            name: _plain(getattr(self.values, name)) for name in sorted(self.explicit)
+        }
+
+
+def _plain(value: Any) -> Any:
+    return list(value) if isinstance(value, tuple) else value
+
+
+def parse_layer(owner: str, options: Mapping[str, Any]) -> OptionLayer:
+    """
+    Validate options given in code.
+
+    :param owner: the link, for error messages.
+    :param options: keyword arguments that are task options.
+    :raises ConfigError: on unknown names or invalid values.
+    :return: the layer.
+    """
+    for name in options:
+        if name not in OPTION_NAMES:
+            close = difflib.get_close_matches(name, OPTION_NAMES, n=1)
+            hint = f" Did you mean {close[0]!r}?" if close else ""
+            raise ConfigError(detail=f"{owner}: unknown option {name!r}.{hint}")
+        if options[name] is None and name not in _NULLABLE:
+            fix = " Use 0 for no retries." if name == "retries" else ""
+            raise ConfigError(detail=f"{owner}: {name} can't be None.{fix}")
+    data = {k: _plain(v) for k, v in options.items() if v is not None}
     if isinstance(data.get("rate"), Rate):
         data["rate"] = str(data["rate"])
-    return build(TaskConfig, data, f"task {task_name}")
+    return OptionLayer(build(TaskConfig, data, owner), frozenset(options), owner)
 
 
-def resolve_options(
-    defaults: TaskDefaults,
-    *layers: TaskConfig | None,
+def resolve_chain(
+    layers: Sequence[OptionLayer],
+    *,
+    what: str,
+    required: bool = True,
 ) -> TaskOptions:
     """
-    Merge option layers on top of the defaults.
+    Merge a chain of layers, outermost first; the nearest link wins.
 
-    :param defaults: ``[defaults]`` from config.
-    :param layers: later layers win; None values don't override.
+    :param layers: ``[app, module, ..., declaration]``.
+    :param what: the declaration, for error messages.
+    :param required: check :data:`REQUIRED`.
+    :raises MissingLimitError: if a required option is set nowhere.
     :raises ConfigError: if the combination is invalid.
     :return: effective options.
     """
-    values: dict[str, Any] = {
-        f.name: getattr(defaults, f.name) for f in dataclasses.fields(defaults)
-    }
-    rate_text: str | None = None
-    rate_burst: int | None = None
+    values: dict[str, Any] = {}
     for layer in layers:
-        if layer is None:
-            continue
-        for f in dataclasses.fields(layer):
-            value = getattr(layer, f.name)
-            if value is None:
-                continue
-            if f.name == "rate":
-                rate_text = value
-            elif f.name == "rate_burst":
-                rate_burst = value
-            else:
-                values[f.name] = value
+        for name in layer.explicit:
+            values[name] = getattr(layer.values, name)
+    if required:
+        missing = [name for name in REQUIRED if name not in values]
+        if missing:
+            owners = [layer.owner for layer in reversed(layers)]
+            places = (
+                ", ".join(owners[:-1]) + f" or {owners[-1]}"
+                if len(owners) > 1
+                else owners[0]
+            )
+            raise MissingLimitError(
+                detail=f"{what} has no {' or '.join(missing)}; set it on {places}.",
+            )
+    rate_text = values.pop("rate", None)
+    rate_burst = values.pop("rate_burst", None)
     known = {f.name for f in dataclasses.fields(TaskOptions)}
     values = {k: v for k, v in values.items() if k in known}
-    if "tags" in values and values["tags"] is not None:
+    if values.get("tags") is not None:
         values["tags"] = tuple(values["tags"])
     rate = parse_rate(rate_text, burst=rate_burst) if rate_text else None
     options = TaskOptions(**values, rate=rate)
@@ -135,14 +190,12 @@ def resolve_options(
 
 
 def _check(options: TaskOptions) -> None:
-    for name in ("concurrency", "node_concurrency", "key_concurrency"):
+    for name in ("max_tasks", "max_tasks_per_node", "max_tasks_per_key"):
         value = getattr(options, name)
         if value is not None and value < 1:
             raise ConfigError(detail=f"{name} must be at least 1, got {value}.")
-    if options.key_concurrency and not options.concurrency_key:
-        raise ConfigError(detail="key_concurrency needs concurrency_key.")
-    if options.concurrency_key and not options.key_concurrency:
-        object.__setattr__(options, "key_concurrency", 1)
+    if options.max_tasks_per_key and not options.key:
+        raise ConfigError(detail="max_tasks_per_key needs key.")
     if (
         options.soft_timeout is not None
         and options.timeout is not None
@@ -164,7 +217,7 @@ def extract_argument(
     kwargs: dict[str, Any],
 ) -> Any:
     """
-    Find the value an option such as ``concurrency_key`` points at.
+    Find the value an option such as ``key`` points at.
 
     :param spec: ``"kwargs.name"``, ``"args.0"`` or a parameter name.
     :param func: task function (to map parameter names to positions).
