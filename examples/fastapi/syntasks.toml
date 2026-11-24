@@ -1,0 +1,9 @@
+[app]
+name = "fastapi-example"
+app = "tasks:app"
+
+[redis]
+url = "${REDIS_URL:-redis://localhost:6379/0}"
+
+[worker]
+processes = 2
