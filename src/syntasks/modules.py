@@ -28,6 +28,7 @@ from syntasks.decor import AsyncSynTasksDecoratedTask, build_decorated_task
 from syntasks.exceptions import SynTasksError
 from syntasks.options import OptionLayer, parse_layer
 from syntasks.scheduler.recurrence import Recurrence, ScheduleDecl
+from syntasks.scheduler.runtime import Runtime
 
 if TYPE_CHECKING:  # pragma: no cover
     from syntasks.app import SynTasks
@@ -220,6 +221,7 @@ class Declarations:
         id: str | None = None,
         args: Any = None,
         kwargs: Any = None,
+        runtime: Runtime | bool | None = None,
         **options: Any,
     ) -> Callable[[Callable[..., Any]], AsyncSynTasksDecoratedTask[Any, Any]]:
         """
@@ -236,6 +238,9 @@ class Declarations:
         :param id: schedule id (one timing only; default: the task name).
         :param args: task arguments of every fire.
         :param kwargs: task keyword arguments of every fire.
+        :param runtime: let the app create copies of this schedule at runtime
+            (``True`` or :class:`~syntasks.Runtime` limits); then ``timing``
+            is optional.
         :param options: schedule policies (``misfire``, ``misfire_grace``,
             ``overlap``, ``max_instances``, ``jitter``, ``start_at``,
             ``end_at``, ``max_runs``, ``pause_after_failures``, ``paused``)
@@ -244,10 +249,15 @@ class Declarations:
         :return: decorator.
         """
         policies = {k: options.pop(k) for k in list(options) if k in SCHEDULE_OPTIONS}
-        decls = _schedule_decls(self.owner, timing, id, args, kwargs, policies)
+        limits = Runtime() if runtime is True else runtime or None
+        decls = (
+            []
+            if timing is None and limits is not None
+            else _schedule_decls(self.owner, timing, id, args, kwargs, policies)
+        )
 
         def wrap(func: Callable[..., Any]) -> AsyncSynTasksDecoratedTask[Any, Any]:
-            return self._make_task(func, task_name, labels, options, decls)
+            return self._make_task(func, task_name, labels, options, decls, limits)
 
         return wrap
 
@@ -258,6 +268,7 @@ class Declarations:
         labels: dict[str, Any] | None,
         options: dict[str, Any],
         schedules: list[ScheduleDecl],
+        runtime: Runtime | None = None,
     ) -> AsyncSynTasksDecoratedTask[Any, Any]:
         decorated = build_decorated_task(
             self._broker_for_tasks(),
@@ -267,6 +278,7 @@ class Declarations:
         )
         layer = parse_layer(f"task {decorated.task_name}", options)
         decorated.declared_schedules = schedules
+        decorated.declared_runtime = runtime
         self._declare_task(decorated, layer)
         return decorated
 

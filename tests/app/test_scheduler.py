@@ -6,6 +6,7 @@ import pytest
 from syntasks import (
     Depends,
     Module,
+    Runtime,
     ScheduleInfo,
     SynTasks,
     after,
@@ -242,7 +243,7 @@ async def test_one_shot_fires_after_downtime(app_factory: AppFactory) -> None:
     app = app_factory(fast)
     done: list[ScheduleInfo] = []
 
-    @app.task
+    @app.schedule(runtime=True)
     async def remind(info: Annotated[ScheduleInfo, Depends()]) -> None:
         done.append(info)
 
@@ -257,7 +258,7 @@ async def test_one_shot_fires_after_downtime(app_factory: AppFactory) -> None:
 async def test_dynamic_crud(app_factory: AppFactory) -> None:
     app = app_factory(fast)
 
-    @app.task
+    @app.schedule(runtime=True)
     async def check(symbol: str, above: float) -> None: ...
 
     created = await app.schedules.create(
@@ -305,7 +306,7 @@ async def test_create_validation(app_factory: AppFactory) -> None:
 
     app = app_factory(config)
 
-    @app.task
+    @app.schedule(runtime=True)
     async def job(count: int) -> None: ...
 
     with pytest.raises(ScheduleError, match="argument 'count'"):
@@ -325,7 +326,7 @@ async def test_max_runs_and_one_shot(app_factory: AppFactory) -> None:
     app = app_factory(fast)
     runs: list[str] = []
 
-    @app.task
+    @app.schedule(runtime=Runtime(keep_finished="0s"))
     async def job(tag: str) -> None:
         runs.append(tag)
 
@@ -344,7 +345,7 @@ async def test_max_runs_and_one_shot(app_factory: AppFactory) -> None:
 async def test_ttl_expiry(app_factory: AppFactory) -> None:
     app = app_factory(fast)
 
-    @app.task
+    @app.schedule(runtime=True)
     async def job() -> None: ...
 
     await app.schedules.create(job, every="1s", ttl="100ms", id="short")
@@ -380,7 +381,7 @@ async def test_claimed_but_not_committed_fire_is_recovered(
     app = app_factory(fast)
     task_ids: list[str] = []
 
-    @app.task(task_name="crashy")
+    @app.schedule(runtime=True, task_name="crashy")
     async def crashy(info: ScheduleInfo = Depends()) -> None:
         task_ids.append(str(info.fire_time))
 
@@ -426,7 +427,7 @@ async def test_overlap_skip(app_factory: AppFactory) -> None:
 async def test_trigger_and_failure_pause(app_factory: AppFactory) -> None:
     app = app_factory(fast)
 
-    @app.task
+    @app.schedule(runtime=True)
     async def broken() -> None:
         raise RuntimeError("bad")
 
@@ -448,7 +449,7 @@ async def _state(app: SynTasks, schedule_id: str, state: str) -> bool:
 async def test_invalid_schedule_marked(app_factory: AppFactory) -> None:
     app = app_factory(fast)
 
-    @app.task(max_payload=10)
+    @app.schedule(runtime=True, max_payload=10)
     async def job(text: str) -> None: ...
 
     await app.schedules.create(job, args=["x" * 50], after="50ms", id="big")

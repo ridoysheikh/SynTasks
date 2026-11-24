@@ -50,8 +50,10 @@ from syntasks.redis import (
 )
 from syntasks.result import SynTasksResult
 from syntasks.scheduler import (
+    Runtime,
     ScheduleError,
     ScheduleInfo,
+    ScheduleLimitError,
     after,
     at,
     calendar,
@@ -95,8 +97,10 @@ __all__ = [
     "ResultGetError",
     "ResultIsReadyError",
     "ResultTooLargeError",
+    "Runtime",
     "ScheduleError",
     "ScheduleInfo",
+    "ScheduleLimitError",
     "SecurityError",
     "SendTaskError",
     "SimpleRetryMiddleware",

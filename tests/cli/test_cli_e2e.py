@@ -1,6 +1,7 @@
 """Run the real ``syntasks`` CLI against a throwaway Redis."""
 
 import asyncio
+import json
 import os
 import signal
 import subprocess
@@ -25,6 +26,10 @@ async def add(a: int, b: int) -> int:
 
 @app.schedule(every("200ms"), id="tick")
 async def tick() -> None:
+    pass
+
+@app.schedule(runtime=True)
+async def remind(note: str) -> None:
     pass
 """
 
@@ -78,7 +83,7 @@ async def test_worker_and_management_commands(  # noqa: PLR0915
     assert "processes = 2  # file:syntasks.toml" in show.stdout
     check = _cli(project, "config", "check")
     assert check.returncode == 0, check.stdout + check.stderr
-    assert "app: e2e (2 tasks)" in check.stdout
+    assert "app: e2e (3 tasks)" in check.stdout
 
     env = {**os.environ, "PYTHONPATH": str(project)}
     worker = subprocess.Popen(
@@ -120,6 +125,33 @@ async def test_worker_and_management_commands(  # noqa: PLR0915
         paused = _cli(project, "schedules", "pause", "tick")
         assert paused.returncode == 0, paused.stderr
         assert (await app.schedules.get("tick")).state == "paused"
+
+        async def remind(note: str) -> None: ...
+
+        app.schedule(
+            runtime=True,
+            task_name="e2e_app:remind",
+            timeout="5s",
+            retries=0,
+            max_tasks=None,
+        )(remind)
+        for owner, note in (("user:1", "a"), ("user:1", "b"), ("user:2", "c")):
+            await app.schedules.create(
+                "e2e_app:remind",
+                after="1h",
+                kwargs={"note": note},
+                owner=owner,
+                tags=["camp"],
+            )
+        mine = _cli(project, "schedules", "list", "--owner", "user:1", "--json")
+        assert mine.returncode == 0, mine.stderr
+        assert (
+            sorted(item["owner"] for item in json.loads(mine.stdout)) == ["user:1"] * 2
+        )
+        cancelled = _cli(project, "schedules", "cancel", "--owner", "user:1")
+        assert "cancelled 2" in cancelled.stdout, cancelled.stdout + cancelled.stderr
+        left = _cli(project, "schedules", "list", "--tag", "camp", "--json")
+        assert [item["owner"] for item in json.loads(left.stdout)] == ["user:2"]
         await app.redis.close()
     finally:
         sys.path.remove(str(project))

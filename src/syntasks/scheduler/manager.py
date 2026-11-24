@@ -41,6 +41,7 @@ from syntasks.scheduler.recurrence import (
     ScheduleDecl,
     parse_time_ms,
 )
+from syntasks.scheduler.runtime import Page, Runtime
 from syntasks.scheduler.schedule import Schedule, ScheduleSpec
 from syntasks.units import parse_duration_ms
 
@@ -126,12 +127,21 @@ class ScheduleConflictError(ScheduleError):
     """The schedule changed since it was read (optimistic locking)."""
 
 
+class ScheduleLimitError(ScheduleError):
+    """A runtime schedule is over a limit of its template (see :class:`Runtime`)."""
+
+
 class StaticScheduleError(ScheduleError):
     """Declared (code) schedules can't be updated or deleted through the API."""
 
 
 # Missed fire times looked at once; more are skipped without counting.
 _MAX_MISSED = 100_000
+# Limits of the labels of a runtime schedule.
+_MAX_TAGS = 20
+_MAX_META = 4096
+# Entries looked at to tell whether another page exists.
+_PEEK = 50
 
 
 def _fire_task_id(schedule_id: str, fire_ms: int) -> str:
@@ -144,6 +154,17 @@ class ScheduleManager:
     def __init__(self, app: SynTasks) -> None:
         self.app = app
         self._declared: dict[str, list[ScheduleDecl]] = {}
+        # Templates of runtime schedules: task name → limits of its copies.
+        self.templates: dict[str, Runtime] = {}
+
+    def declare_template(self, task_name: str, runtime: Runtime) -> None:
+        """
+        Let the app create runtime copies of a schedule (``runtime=...``).
+
+        :param task_name: the schedule's task.
+        :param runtime: limits of its copies.
+        """
+        self.templates[task_name] = runtime
 
     # -- keys --------------------------------------------------------------
 
@@ -227,11 +248,11 @@ class ScheduleManager:
         extra = {"paused": bool(options.get("paused", False))}
         return spec, extra
 
-    def _check_payload(self, spec: ScheduleSpec) -> None:
+    def _check_payload(self, spec: ScheduleSpec, max_bytes: int | None = None) -> None:
         try:
             dumps_bounded(
                 {"args": spec.args, "kwargs": spec.kwargs, "labels": spec.labels},
-                max_bytes=self.app.config.scheduler.max_payload,
+                max_bytes=max_bytes or self.app.config.scheduler.max_payload,
                 what=f"Arguments of schedule {spec.id!r}",
             )
         except ValueError as exc:
@@ -352,7 +373,7 @@ class ScheduleManager:
         specs = self.static_specs()
         config = self.app.config
         fingerprints = {sid: spec.fingerprint() for sid, (spec, _, _) in specs.items()}
-        set_fp = json.dumps(sorted(fingerprints.items()))
+        set_fp = json.dumps([sorted(fingerprints.items()), sorted(self.templates)])
         revision = "" if config.app.revision is None else str(config.app.revision)
         node = self.app.cluster.node_id
         meta = self._key("static", "meta")
@@ -421,6 +442,7 @@ class ScheduleManager:
                         schedule_id,
                     )
                     await self.app.redis.hdel(self._key("static"), schedule_id)
+            await self._sync_templates(now)
             await scripts.SYNC_END(
                 self.app.redis,
                 [meta, lock],
@@ -432,6 +454,46 @@ class ScheduleManager:
         await self.app.cluster.control.publish("schedule.changed")
         logger.info("Synced %d declared schedule(s).", len(specs))
         return "synced"
+
+    async def _sync_templates(self, now: int) -> None:
+        """Orphan copies of templates that left the code; adopt returning ones."""
+        redis = self.app.redis
+        for raw in await redis.smembers(self._key("templates")):
+            template = raw.decode()
+            adopt = template in self.templates
+            ids = await redis.execute("ZRANGE", self._key("by-task", template), 0, -1)
+            changed = 0
+            for raw_id in ids:
+                schedule_id = raw_id.decode()
+                schedule = await self._load(schedule_id)
+                if schedule is None or schedule.source != "api":
+                    continue
+                if adopt and schedule.state != "orphaned":
+                    continue
+                if not adopt and schedule.state not in ("active", "paused"):
+                    continue
+                nominal = schedule.spec.next_after(now) if adopt else None
+                due = None if nominal is None else schedule.spec.due_for(nominal)
+                await scripts.ORPHAN(
+                    redis,
+                    [self.def_key(schedule_id), self.due_key(self.shard(schedule_id))],
+                    [
+                        schedule_id,
+                        "adopt" if adopt else "orphan",
+                        "" if due is None else due,
+                        "" if nominal is None else nominal,
+                    ],
+                )
+                changed += 1
+            if changed and not adopt:
+                logger.warning(
+                    "%d runtime schedule(s) of %s are orphaned: the template is no "
+                    "longer declared in code. They don't fire; delete them with "
+                    "app.schedules.cancel_all(template=%r).",
+                    changed,
+                    template,
+                    template,
+                )
 
     # -- storage helpers -----------------------------------------------------------
 
@@ -447,6 +509,11 @@ class ScheduleManager:
         expires_at: int | None,
         expected_version: int | None = None,
         allow_static: bool = False,
+        owner: str | None = None,
+        tags: builtins.list[str] | None = None,
+        meta: dict[str, Any] | None = None,
+        owner_cap: int | None = None,
+        keep_ms: int | None = None,
     ) -> int:
         due = None if nominal is None else spec.due_for(nominal)
         reply = await scripts.UPSERT(
@@ -467,9 +534,19 @@ class ScheduleManager:
                 "1" if keep_runtime else "",
                 self._key("by-task", ""),
                 "" if spec.max_runs is None else spec.max_runs,
+                owner or "",
+                json.dumps(tags) if tags else "",
+                json.dumps(meta, separators=(",", ":")) if meta else "",
+                "" if owner_cap is None else owner_cap,
+                "" if keep_ms is None else keep_ms,
             ],
         )
         status = reply[0].decode()
+        if status == "owner_quota":
+            raise ScheduleLimitError(
+                detail=f"Owner {owner!r} already has {reply[1].decode()} schedules "
+                f"of {spec.task} (max_per_owner = {owner_cap}).",
+            )
         if status == "exists":
             raise ScheduleError(detail=f"Schedule {spec.id!r} already exists.")
         if status == "static" and not allow_static:
@@ -518,9 +595,119 @@ class ScheduleManager:
 
     # -- CRUD --------------------------------------------------------------------
 
+    @staticmethod
+    def _from_timing(item: Any, now: int) -> builtins.list[Recurrence]:
+        if isinstance(item, Recurrence):
+            return [item]
+        if isinstance(item, ScheduleDecl):
+            out: builtins.list[Recurrence] = []
+            if item.recurrence is not None:
+                out.append(item.recurrence)
+            if item.after_ms is not None:
+                out.append(At(now + item.after_ms))
+            return out
+        raise ScheduleError(
+            detail="A timing must come from every(), cron(), calendar(), at() or "
+            f"after(), got {item!r}.",
+        )
+
+    def _timings(
+        self,
+        now: int,
+        *,
+        timing: Any = None,
+        every: Any = None,
+        cron: str | None = None,
+        tz: str | None = None,
+        at: Any = None,
+        after: Any = None,
+    ) -> builtins.list[Recurrence]:
+        items = timing if isinstance(timing, (builtins.list, tuple)) else [timing]
+        recurrences = [
+            r
+            for item in items
+            if item is not None
+            for r in self._from_timing(item, now)
+        ]
+        try:
+            if every is not None:
+                recurrences.append(Every(parse_duration_ms(every), anchor_ms=now))
+            if cron is not None:
+                recurrences.append(Cron(cron, tz))
+            if at is not None:
+                recurrences.append(At(parse_time_ms(at)))
+            if after is not None:
+                recurrences.append(At(now + parse_duration_ms(after)))
+        except ValueError as exc:
+            raise ScheduleError(detail=str(exc)) from exc
+        return recurrences
+
+    def _template(self, task_name: str) -> Runtime:
+        runtime = self.templates.get(task_name)
+        if runtime is None:
+            raise ScheduleError(
+                detail=f"{task_name} isn't a runtime schedule; declare it with "
+                "@app.schedule(runtime=Runtime(...)) to create schedules of it "
+                "at runtime.",
+            )
+        return runtime
+
+    @staticmethod
+    def _check_copy(
+        runtime: Runtime,
+        recurrences: builtins.list[Recurrence],
+        expiry: int | None,
+        now: int,
+    ) -> int | None:
+        """Check a runtime copy against its template; return its expiry."""
+        if runtime.min_interval_ms is not None:
+            for recurrence in recurrences:
+                gap = recurrence.min_interval_ms()
+                if gap is not None and gap < runtime.min_interval_ms:
+                    raise ScheduleLimitError(
+                        detail=f"{recurrence.describe()} is more often than the "
+                        f"template's min_interval ({runtime.min_interval}).",
+                    )
+        if runtime.max_ttl_ms is not None:
+            if expiry is None:
+                return now + runtime.max_ttl_ms
+            if expiry - now > runtime.max_ttl_ms:
+                raise ScheduleLimitError(
+                    detail=f"The schedule would live longer than the template's "
+                    f"max_ttl ({runtime.max_ttl}).",
+                )
+        return expiry
+
+    @staticmethod
+    def _check_labels(
+        owner: str | None,
+        tags: Any,
+        meta: Any,
+    ) -> tuple[builtins.list[str], dict[str, Any] | None]:
+        if owner is not None and (
+            not isinstance(owner, str) or not 0 < len(owner) <= 200
+        ):
+            raise ScheduleError(detail="owner must be a string of 1-200 characters.")
+        tag_list = [tags] if isinstance(tags, str) else builtins.list(tags or ())
+        if len(tag_list) > _MAX_TAGS or any(
+            not isinstance(t, str) or not 0 < len(t) <= 200 for t in tag_list
+        ):
+            raise ScheduleError(
+                detail=f"tags must be at most {_MAX_TAGS} strings of 1-200 characters.",
+            )
+        if meta is not None:
+            if not isinstance(meta, dict):
+                raise ScheduleError(detail="meta must be a dict.")
+            try:
+                dumps_bounded(meta, max_bytes=_MAX_META, what="meta")
+            except ValueError as exc:
+                raise ScheduleError(detail=str(exc)) from exc
+        return sorted(set(tag_list)), meta
+
     async def create(
         self,
         task: Any,
+        timing: Any = None,
         *,
         args: Any = (),
         kwargs: dict[str, Any] | None = None,
@@ -533,12 +720,17 @@ class ScheduleManager:
         ttl: Any = None,
         expires_at: Any = None,
         if_exists: str = "error",
+        owner: str | None = None,
+        tags: Any = (),
+        meta: dict[str, Any] | None = None,
         **options: Any,
     ) -> Schedule:
         """
-        Create a dynamic schedule.
+        Create a runtime copy of a template schedule (``runtime=...``).
 
-        :param task: task object or task name.
+        :param task: the template's task, or its name.
+        :param timing: :func:`every`, :func:`cron`, :func:`calendar`,
+            :func:`at` or :func:`after` (or use the keywords below).
         :param args: task arguments (JSON).
         :param kwargs: task keyword arguments (JSON).
         :param every: interval (``"1s"``, ``"250ms"``, seconds, timedelta).
@@ -550,26 +742,30 @@ class ScheduleManager:
         :param ttl: delete the schedule this long after creation.
         :param expires_at: delete the schedule at this time.
         :param if_exists: ``error``, ``replace`` or ``ignore``.
+        :param owner: who it belongs to, e.g. ``"user:42"`` (listing, caps).
+        :param tags: labels to find it by, e.g. ``["campaign:spring"]``.
+        :param meta: small JSON shown in listings, e.g. ``{"title": ...}``.
         :param options: policies: ``start_at``, ``end_at``, ``jitter``,
             ``misfire``, ``misfire_grace``, ``max_catchup``, ``overlap``,
-            ``max_instances``, ``timeout``, ``retries``, ``queue``,
-            ``priority``, ``labels``, ``max_runs``, ``pause_after_failures``,
-            ``paused``.
-        :raises ScheduleError: if the schedule is invalid.
+            ``max_instances``, ``labels``, ``max_runs``,
+            ``pause_after_failures``, ``paused``.
+        :raises ScheduleError: if the task isn't a template or a value is invalid.
+        :raises ScheduleLimitError: if the copy is over a limit of its template.
         :return: the stored schedule.
         """
         task_name = task if isinstance(task, str) else task.task_name
+        runtime = self._template(task_name)
         now = self.app.cluster.clock.now_ms()
-        recurrences: builtins.list[Recurrence] = []
+        recurrences = self._timings(
+            now,
+            timing=timing,
+            every=every,
+            cron=cron,
+            tz=tz,
+            at=at,
+            after=after,
+        )
         try:
-            if every is not None:
-                recurrences.append(Every(parse_duration_ms(every), anchor_ms=now))
-            if cron is not None:
-                recurrences.append(Cron(cron, tz))
-            if at is not None:
-                recurrences.append(At(parse_time_ms(at)))
-            if after is not None:
-                recurrences.append(At(now + parse_duration_ms(after)))
             expiry: int | None = None
             if ttl is not None:
                 expiry = now + parse_duration_ms(ttl)
@@ -579,19 +775,23 @@ class ScheduleManager:
         except ValueError as exc:
             raise ScheduleError(detail=str(exc)) from exc
         if not recurrences:
-            raise ScheduleError(detail="Give every, cron, at or after.")
+            raise ScheduleError(
+                detail="Give a timing: every, cron, calendar, at or after."
+            )
         if if_exists not in ("error", "replace", "ignore"):
             raise ScheduleError(detail="if_exists must be error, replace or ignore.")
+        expiry = self._check_copy(runtime, recurrences, expiry, now)
+        tag_list, meta = self._check_labels(owner, tags, meta)
         schedule_id = id or uuid.uuid4().hex
         spec, extra = self._spec(
             schedule_id,
             task_name,
             recurrences,
-            list(args),
+            builtins.list(args),
             dict(kwargs or {}),
             options,
         )
-        self._check_payload(spec)
+        self._check_payload(spec, runtime.max_payload_bytes)
         self._check_interval(spec)
         self.check_arguments(spec)
         await self._write(
@@ -601,6 +801,11 @@ class ScheduleManager:
             if_exists=if_exists,
             state="paused" if extra.get("paused") else "active",
             expires_at=expiry,
+            owner=owner,
+            tags=tag_list,
+            meta=meta,
+            owner_cap=runtime.max_per_owner if owner else None,
+            keep_ms=runtime.keep_finished_ms,
         )
         await self.app.cluster.control.publish("schedule.changed")
         return await self.get(schedule_id)
@@ -629,15 +834,20 @@ class ScheduleManager:
         Iterate over schedules, oldest first.
 
         :param task: only schedules of this task.
-        :param source: ``code``, ``config`` or ``api``.
+        :param source: ``code`` or ``api``.
         :param state: ``active``, ``paused``, ``done``, ``invalid``, ...
         :yield: schedules.
         """
         if task is not None:
-            ids = sorted(
+            ids = [
                 raw.decode()
-                for raw in await self.app.redis.smembers(self._key("by-task", task))
-            )
+                for raw in await self.app.redis.execute(
+                    "ZRANGE",
+                    self._key("by-task", task),
+                    0,
+                    -1,
+                )
+            ]
         else:
             ids = [
                 raw.decode()
@@ -665,7 +875,7 @@ class ScheduleManager:
                     continue
                 yield schedule
 
-    async def update(  # noqa: C901
+    async def update(
         self,
         schedule_id: str,
         *,
@@ -673,104 +883,93 @@ class ScheduleManager:
         **changes: Any,
     ) -> Schedule:
         """
-        Change a dynamic schedule.
+        Change a runtime schedule.
 
-        Accepts the same arguments as :meth:`create` (except ``id`` and
-        ``if_exists``). Changing the timing recomputes the next fire.
+        Accepts the arguments of :meth:`create` (except ``id`` and
+        ``if_exists``). Changing the timing recomputes the next fire; owner,
+        tags and meta stay unless given.
 
         :param schedule_id: id.
         :param version: expected version (optimistic lock); None to skip.
         :param changes: new values.
         :raises StaticScheduleError: for schedules declared in code.
         :raises ScheduleConflictError: if ``version`` is stale.
+        :raises ScheduleLimitError: if the change breaks a template limit.
         :return: updated schedule.
         """
         current = await self.get(schedule_id)
         if current.source != "api":
             raise StaticScheduleError(
-                detail=f"Schedule {schedule_id!r} is declared in code or config; "
+                detail=f"Schedule {schedule_id!r} is declared in code; "
                 "change it there.",
             )
         spec = current.spec
+        runtime = self._template(spec.task)
         now = self.app.cluster.clock.now_ms()
-        data = spec.to_dict()
-        timing = {"every", "cron", "tz", "at", "after"}
-        if timing & set(changes):
-            recurrences: builtins.list[Recurrence] = []
-            if changes.get("every") is not None:
-                recurrences.append(
-                    Every(parse_duration_ms(changes["every"]), anchor_ms=now),
-                )
-            cron_expr = changes.get("cron")
-            if cron_expr is not None:
-                recurrences.append(Cron(cron_expr, changes.get("tz")))
-            if changes.get("at") is not None:
-                recurrences.append(At(parse_time_ms(changes["at"])))
-            if changes.get("after") is not None:
-                recurrences.append(At(now + parse_duration_ms(changes["after"])))
+        timing_keys = {"timing", "every", "cron", "tz", "at", "after"}
+        recurrences = spec.recurrences
+        if timing_keys & set(changes):
+            recurrences = self._timings(
+                now,
+                timing=changes.get("timing"),
+                every=changes.get("every"),
+                cron=changes.get("cron"),
+                tz=changes.get("tz"),
+                at=changes.get("at"),
+                after=changes.get("after"),
+            )
             if not recurrences:
-                raise ScheduleError(detail="Give every, cron, at or after.")
-            data["recurrences"] = [r.to_dict() for r in recurrences]
-        for name in ("args", "kwargs"):
-            if name in changes:
-                data[name] = (
-                    list(changes[name]) if name == "args" else dict(changes[name])
+                raise ScheduleError(
+                    detail="Give a timing: every, cron, calendar, at or after."
                 )
-        task_name = changes.get("task", spec.task)
-        task_name = task_name if isinstance(task_name, str) else task_name.task_name
-        options = {
-            "start_at": changes.get(
-                "start_at",
-                spec.start_at_ms and spec.start_at_ms / 1000,
+        policies = {
+            "start_at": spec.start_at_ms and spec.start_at_ms / 1000,
+            "end_at": spec.end_at_ms and spec.end_at_ms / 1000,
+            "jitter": spec.jitter_ms / 1000,
+            "misfire": spec.misfire,
+            "misfire_grace": (
+                None if spec.misfire_grace_ms is None else spec.misfire_grace_ms / 1000
             ),
-            "end_at": changes.get("end_at", spec.end_at_ms and spec.end_at_ms / 1000),
-            "jitter": changes.get("jitter", spec.jitter_ms / 1000),
-            "misfire": changes.get("misfire", spec.misfire),
-            "misfire_grace": changes.get(
-                "misfire_grace",
-                None if spec.misfire_grace_ms is None else spec.misfire_grace_ms / 1000,
-            ),
-            "max_catchup": changes.get("max_catchup", spec.max_catchup),
-            "overlap": changes.get("overlap", spec.overlap),
-            "max_instances": changes.get("max_instances", spec.max_instances),
-            "timeout": changes.get("timeout", spec.timeout),
-            "retries": changes.get("retries", spec.retries),
-            "queue": changes.get("queue", spec.queue),
-            "priority": changes.get("priority", spec.priority),
-            "labels": changes.get("labels", spec.labels),
-            "max_runs": changes.get("max_runs", spec.max_runs),
-            "pause_after_failures": changes.get(
-                "pause_after_failures",
-                spec.pause_after_failures,
-            ),
+            "max_catchup": spec.max_catchup,
+            "overlap": spec.overlap,
+            "max_instances": spec.max_instances,
+            "labels": spec.labels,
+            "max_runs": spec.max_runs,
+            "pause_after_failures": spec.pause_after_failures,
         }
-        options = {k: v for k, v in options.items() if v is not None}
-        from syntasks.scheduler.recurrence import recurrence_from_dict  # noqa: PLC0415
-
+        for name in _POLICY_NAMES:
+            if name in changes and name != "paused":
+                policies[name] = changes[name]
+        policies = {k: v for k, v in policies.items() if v is not None}
         new_spec, _ = self._spec(
             schedule_id,
-            task_name,
-            [recurrence_from_dict(r) for r in data["recurrences"]],
-            data["args"],
-            data["kwargs"],
-            options,
+            spec.task,
+            builtins.list(recurrences),
+            builtins.list(changes.get("args", spec.args)),
+            dict(changes.get("kwargs", spec.kwargs)),
+            policies,
         )
-        self._check_payload(new_spec)
+        expiry = current.expires_ms
+        try:
+            if "ttl" in changes:
+                ttl = changes["ttl"]
+                expiry = None if ttl is None else now + parse_duration_ms(ttl)
+            if "expires_at" in changes:
+                when = changes["expires_at"]
+                expiry = None if when is None else parse_time_ms(when)
+        except ValueError as exc:
+            raise ScheduleError(detail=str(exc)) from exc
+        if "ttl" in changes or "expires_at" in changes or timing_keys & set(changes):
+            expiry = self._check_copy(runtime, builtins.list(recurrences), expiry, now)
+        owner = changes.get("owner", current.owner)
+        tag_list, meta = self._check_labels(
+            owner,
+            changes.get("tags", current.tags),
+            changes.get("meta", current.meta),
+        )
+        self._check_payload(new_spec, runtime.max_payload_bytes)
         self._check_interval(new_spec)
         self.check_arguments(new_spec)
-        expiry = current.expires_ms
-        if "ttl" in changes:
-            expiry = (
-                None
-                if changes["ttl"] is None
-                else now + parse_duration_ms(changes["ttl"])
-            )
-        if "expires_at" in changes:
-            expiry = (
-                None
-                if changes["expires_at"] is None
-                else parse_time_ms(changes["expires_at"])
-            )
         timing_changed = new_spec.timing_fingerprint() != spec.timing_fingerprint()
         await self._write(
             new_spec,
@@ -781,6 +980,13 @@ class ScheduleManager:
             keep_runtime=not timing_changed,
             expires_at=expiry,
             expected_version=version,
+            owner=owner,
+            tags=tag_list,
+            meta=meta,
+            owner_cap=runtime.max_per_owner
+            if owner and owner != current.owner
+            else None,
+            keep_ms=runtime.keep_finished_ms,
         )
         await self.app.cluster.control.publish("schedule.changed")
         return await self.get(schedule_id)
@@ -801,6 +1007,219 @@ class ScheduleManager:
                 detail=f"Schedule {schedule_id!r} is declared in code or config; "
                 "remove it there (or pause it).",
             )
+
+    async def cancel(self, schedule_id: str) -> None:
+        """
+        Delete a runtime schedule (same as :meth:`delete`).
+
+        :param schedule_id: id.
+        """
+        await self.delete(schedule_id)
+
+    def _index_for(
+        self,
+        owner: str | None,
+        tag: str | None,
+        template: str | None,
+    ) -> str:
+        if owner is not None:
+            return self._key("owner", owner)
+        if tag is not None:
+            return self._key("tag", tag)
+        if template is not None:
+            return self._key("by-task", template)
+        return self._key("ids")
+
+    async def find(  # noqa: C901
+        self,
+        *,
+        owner: str | None = None,
+        tag: str | None = None,
+        template: str | None = None,
+        state: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> Page:
+        """
+        Schedules by owner, tag, template (task) and state, oldest first.
+
+        :param owner: only this owner's.
+        :param tag: only those with this tag.
+        :param template: only copies of this task's template.
+        :param state: ``active``, ``paused``, ``done``, ``orphaned``, ...
+        :param limit: page size (1-1000).
+        :param cursor: :attr:`Page.cursor` of the previous page.
+        :raises ScheduleError: on a bad limit or cursor.
+        :return: one page.
+        """
+        if not 1 <= limit <= 1000:
+            raise ScheduleError(detail="limit must be between 1 and 1000.")
+        key = self._index_for(owner, tag, template)
+        score, last_id = "-inf", ""
+        if cursor:
+            try:
+                score, last_id = cursor.split(":", 1)
+                float(score)
+            except ValueError:
+                raise ScheduleError(detail=f"Invalid cursor {cursor!r}.") from None
+        items: builtins.list[Schedule] = []
+        more = True
+        while len(items) < limit and more:
+            batch = await self.app.redis.execute(
+                "ZRANGEBYSCORE",
+                key,
+                score,
+                "+inf",
+                "WITHSCORES",
+                "LIMIT",
+                0,
+                limit * 2 + 10,
+            )
+            pairs = [
+                (batch[i].decode(), float(batch[i + 1]))
+                for i in range(0, len(batch), 2)
+            ]
+            fresh = [
+                (sid, sc)
+                for sid, sc in pairs
+                if score == "-inf" or sc > float(score) or sid > last_id
+            ]
+            more = len(pairs) == limit * 2 + 10
+            if not fresh:
+                if more:  # a long run of ties already seen: step past them
+                    last_id = pairs[-1][0]
+                    continue
+                break
+            pipe = self.app.redis.pipeline()
+            for sid, _ in fresh:
+                pipe.add("HGETALL", self.def_key(sid))
+            replies = await pipe.execute()
+            for (sid, sc), reply in zip(fresh, replies, strict=True):
+                score, last_id = repr(sc), sid
+                if not reply:
+                    continue
+                schedule = Schedule.from_hash(
+                    dict(zip(reply[::2], reply[1::2], strict=True))
+                )
+                if (
+                    (owner is not None and schedule.owner != owner)
+                    or (tag is not None and tag not in schedule.tags)
+                    or (template is not None and schedule.task != template)
+                    or (state is not None and schedule.state != state)
+                ):
+                    continue
+                items.append(schedule)
+                if len(items) == limit:
+                    break
+            if len(items) == limit:
+                rest = await self.app.redis.execute(
+                    "ZRANGEBYSCORE",
+                    key,
+                    score,
+                    "+inf",
+                    "WITHSCORES",
+                    "LIMIT",
+                    0,
+                    _PEEK,
+                )
+                more = len(rest) == _PEEK * 2 or any(
+                    float(rest[i + 1]) > float(score) or rest[i].decode() > last_id
+                    for i in range(0, len(rest), 2)
+                )
+        return Page(
+            items=items, cursor=f"{score}:{last_id}" if more and items else None
+        )
+
+    async def _each(
+        self,
+        owner: str | None,
+        tag: str | None,
+        template: str | None,
+    ) -> AsyncIterator[Schedule]:
+        if owner is None and tag is None and template is None:
+            raise ScheduleError(detail="Give owner, tag or template.")
+        cursor: str | None = None
+        while True:
+            page = await self.find(
+                owner=owner,
+                tag=tag,
+                template=template,
+                limit=500,
+                cursor=cursor,
+            )
+            for schedule in page.items:
+                yield schedule
+            if page.cursor is None:
+                return
+            cursor = page.cursor
+
+    async def pause_all(
+        self,
+        *,
+        owner: str | None = None,
+        tag: str | None = None,
+        template: str | None = None,
+    ) -> int:
+        """
+        Pause matching runtime schedules.
+
+        :param owner: an owner's.
+        :param tag: those with a tag.
+        :param template: copies of a template.
+        :return: schedules paused.
+        """
+        ids = [
+            s.id
+            async for s in self._each(owner, tag, template)
+            if s.source == "api" and s.state == "active"
+        ]
+        for schedule_id in ids:
+            await self._set_state(schedule_id, "pause")
+        return len(ids)
+
+    async def resume_all(
+        self,
+        *,
+        owner: str | None = None,
+        tag: str | None = None,
+        template: str | None = None,
+    ) -> int:
+        """
+        Resume matching paused runtime schedules.
+
+        :param owner: an owner's.
+        :param tag: those with a tag.
+        :param template: copies of a template.
+        :return: schedules resumed.
+        """
+        ids = [
+            s.id
+            async for s in self._each(owner, tag, template)
+            if s.source == "api" and s.state == "paused"
+        ]
+        for schedule_id in ids:
+            await self._set_state(schedule_id, "resume")
+        return len(ids)
+
+    async def cancel_all(
+        self,
+        *,
+        owner: str | None = None,
+        tag: str | None = None,
+        template: str | None = None,
+    ) -> int:
+        """
+        Delete matching runtime schedules.
+
+        :param owner: an owner's.
+        :param tag: those with a tag.
+        :param template: copies of a template.
+        :return: schedules deleted.
+        """
+        ids = [
+            s.id async for s in self._each(owner, tag, template) if s.source == "api"
+        ]
+        return sum([await self._delete(schedule_id) for schedule_id in ids])
 
     async def _set_state(self, schedule_id: str, action: str) -> Schedule:
         nominal: int | None = None
@@ -1154,21 +1573,19 @@ class ScheduleManager:
 
     async def expire(self) -> int:
         """
-        Delete dynamic schedules whose TTL ran out, and finished ones.
+        Delete expired runtime schedules and finished ones kept long enough.
+
+        A runtime schedule expires when its TTL runs out; a finished one-shot
+        is deleted when its template's ``keep_finished`` is over.
 
         :return: number deleted.
         """
         redis = self.app.redis
         now = self.app.cluster.clock.now_ms()
-        expired = await redis.zrangebyscore(self._key("expiry"), "-inf", now)
         deleted = 0
-        for raw in expired:
-            deleted += await self._delete(raw.decode(), allow_static=True)
-        for raw in await redis.smembers(self._key("dynamic")):
-            schedule_id = raw.decode()
-            state = await redis.hget(self.def_key(schedule_id), "state")
-            if state in (b"done", b"expired"):
-                deleted += await self._delete(schedule_id)
+        for key in (self._key("expiry"), self._key("finished")):
+            for raw in await redis.zrangebyscore(key, "-inf", now):
+                deleted += await self._delete(raw.decode(), allow_static=True)
         return deleted
 
     def add_janitor_hooks(self, janitor: Janitor) -> None:

@@ -57,6 +57,8 @@ class AsyncSynTasksDecoratedTask(Generic[_FuncParams, _ReturnType]):
         self.return_type = return_type
         # Schedules declared with @app.schedule (registered with the task).
         self.declared_schedules: list[Any] = []
+        # Limits of runtime copies, if @app.schedule(runtime=...) allows them.
+        self.declared_runtime: Any = None
 
         # This is a hack to make ProcessPoolExecutor work
         # with decorated functions.
@@ -137,21 +139,33 @@ class AsyncSynTasksDecoratedTask(Generic[_FuncParams, _ReturnType]):
         """
         return await self.kicker().kiq(*args, **kwargs)
 
-    async def schedule(self, **options: Any) -> Any:
+    async def schedule(self, timing: Any = None, /, **options: Any) -> Any:
         """
-        Create a dynamic schedule for this task (SynTasks apps only).
+        Create a runtime copy of this schedule (``@app.schedule(runtime=...)``).
 
         Same arguments as :meth:`syntasks.scheduler.ScheduleManager.create`,
-        e.g. ``await check.schedule(every="1s", ttl="2h", kwargs={...})``.
+        e.g. ``await post.schedule(at="2026-12-01T09:00", kwargs={...},
+        owner="user:42")``.
 
+        :param timing: :func:`~syntasks.every`, :func:`~syntasks.calendar`, ...
         :param options: schedule options.
         :raises TypeError: if the task's broker is not a SynTasks app.
         :return: the created schedule.
         """
+        return await self._schedules().create(self.task_name, timing, **options)
+
+    @property
+    def schedules(self) -> Any:
+        """The runtime copies of this schedule (list, update, cancel)."""
+        from syntasks.scheduler.runtime import TemplateSchedules  # noqa: PLC0415
+
+        return TemplateSchedules(self._schedules(), self.task_name)
+
+    def _schedules(self) -> Any:
         schedules = getattr(self.broker, "schedules", None)
         if schedules is None:
             raise TypeError("Schedules need a SynTasks app as the broker.")
-        return await schedules.create(self.task_name, **options)
+        return schedules
 
     def kicker(self) -> AsyncKicker[_FuncParams, _ReturnType]:
         """

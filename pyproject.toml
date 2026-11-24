@@ -187,6 +187,7 @@ lint.mccabe = { max-complexity = 10 }
 "src/syntasks/cli/*" = [
   "T201",  # CLI commands print
   "C901",  # One branch per sub-command
+  "PLR0911",
   "PLR0912",
   "PLR0915",
 ]

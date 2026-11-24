@@ -203,6 +203,10 @@ class Schedule:
     updated_ms: int | None = None
     expires_ms: int | None = None
     invalid_reason: str | None = None
+    owner: str | None = None
+    tags: list[str] = field(default_factory=list)
+    meta: dict[str, Any] | None = None
+    finished_ms: int | None = None
 
     @property
     def id(self) -> str:
@@ -213,6 +217,11 @@ class Schedule:
     def task(self) -> str:
         """Task name."""
         return self.spec.task
+
+    @property
+    def template(self) -> str | None:
+        """The template a runtime schedule was copied from (its task), else None."""
+        return self.spec.task if self.source == "api" else None
 
     def describe(self) -> str:
         """Human description of when it fires."""
@@ -242,6 +251,10 @@ class Schedule:
             updated_ms=_int(data.get(b"updated_at")),
             expires_ms=_int(data.get(b"expires_at")),
             invalid_reason=_text(data.get(b"invalid_reason")),
+            owner=_text(data.get(b"owner")) or None,
+            tags=json.loads(data[b"tags"]) if data.get(b"tags") else [],
+            meta=json.loads(data[b"meta"]) if data.get(b"meta") else None,
+            finished_ms=_int(data.get(b"finished_at")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -262,5 +275,9 @@ class Schedule:
             "failures": self.failures,
             "expires": _iso(self.expires_ms) if self.expires_ms else None,
             "invalid_reason": self.invalid_reason,
+            "owner": self.owner,
+            "tags": self.tags,
+            "meta": self.meta,
+            "finished": _iso(self.finished_ms) if self.finished_ms else None,
             "spec": self.spec.to_dict(),
         }

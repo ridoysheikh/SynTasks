@@ -194,6 +194,8 @@ class SynTasks(Declarations, AsyncBroker):  # type: ignore[misc]
         self._register_task(name, task)
         if task.declared_schedules:
             self.schedules.declare(name, task.declared_schedules)
+        if task.declared_runtime is not None:
+            self.schedules.declare_template(name, task.declared_runtime)
 
     def _declare_queue(self, name: str, options: QueueConfig) -> None:
         self.declare_queue(name, options)

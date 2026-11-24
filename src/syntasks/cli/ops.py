@@ -179,6 +179,18 @@ class QueuesCMD(SynTasksCMD):
         return guarded(lambda: run_with_app(parsed, act))
 
 
+async def _find_all(schedules: Any, **filters: Any) -> list[Any]:
+    """Every page of a schedule search."""
+    items: list[Any] = []
+    cursor = None
+    while True:
+        page = await schedules.find(limit=1000, cursor=cursor, **filters)
+        items.extend(page.items)
+        if page.cursor is None:
+            return items
+        cursor = page.cursor
+
+
 def _overdue(next_ms: int | None, now: int, state: str) -> str:
     """How far an active schedule is past its next fire time, or "-"."""
     if state != "active" or next_ms is None or next_ms >= now - 1000:
@@ -202,6 +214,16 @@ class SchedulesCMD(SynTasksCMD):
         listing = _action(sub, "list", "All schedules.")
         listing.add_argument("--task", help="Only schedules of this task.")
         listing.add_argument("--source", choices=["code", "api"])
+        listing.add_argument("--owner", help="Only runtime schedules of this owner.")
+        listing.add_argument("--tag", help="Only runtime schedules with this tag.")
+        listing.add_argument("--template", help="Only copies of this template (task).")
+        cancel = _action(
+            sub, "cancel", "Delete runtime schedules (by id, owner or tag)."
+        )
+        cancel.add_argument("id", nargs="?")
+        cancel.add_argument("--owner")
+        cancel.add_argument("--tag")
+        cancel.add_argument("--template")
         for name, text in (
             ("show", "Details of a schedule."),
             ("pause", "Pause a schedule."),
@@ -219,14 +241,34 @@ class SchedulesCMD(SynTasksCMD):
         async def act(app: "SynTasks") -> int:
             schedules = app.schedules
             action = parsed.action
+            if action == "cancel":
+                if parsed.id:
+                    await schedules.cancel(parsed.id)
+                    print(f"cancelled 1: {parsed.id}")
+                    return 0
+                count = await schedules.cancel_all(
+                    owner=parsed.owner,
+                    tag=parsed.tag,
+                    template=parsed.template,
+                )
+                print(f"cancelled {count}")
+                return 0
             if action == "list":
-                items = [
-                    s
-                    async for s in schedules.list(
-                        task=parsed.task,
-                        source=parsed.source,
+                if parsed.owner or parsed.tag or parsed.template:
+                    items = await _find_all(
+                        schedules,
+                        owner=parsed.owner,
+                        tag=parsed.tag,
+                        template=parsed.template or parsed.task,
                     )
-                ]
+                else:
+                    items = [
+                        s
+                        async for s in schedules.list(
+                            task=parsed.task,
+                            source=parsed.source,
+                        )
+                    ]
                 if parsed.json:
                     print_json([s.to_dict() for s in items])
                 else:
