@@ -39,6 +39,7 @@ With neither, the Redis tests are skipped and the rest still run.
 | `tests/app/test_flow_control.py` | `fair`, `debounce`, `throttle`, `rate_per_key` |
 | `tests/app/test_completion.py` | callbacks, group fan-in, `call`, batches |
 | `tests/app/test_events_and_presence.py` | task events and `Emit`; channel limits, `authorize`, presence |
+| `tests/app/test_feeds.py`, `test_watch.py` | feeds (shared fetching, linger, last value, health, shards, streams) and watches (groups, saved groups, conflation, the JSON protocol) |
 | `tests/app/test_channels.py` | broadcast, handlers, takeover after a crash, shared consumers |
 | `tests/app/test_results.py` | push-based results, groups, progress |
 | `tests/cli/test_cli_e2e.py` | a real `syntasks worker` with two processes, driven through the CLI |

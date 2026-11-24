@@ -81,6 +81,8 @@ question and stays short. Find what you want to do below and follow the link.
 | --- | --- |
 | push updates to many readers (websocket rooms, live feeds) | [Channels › Publishing and reading](guides/channels.md#publishing-and-reading) |
 | keep one stateful loop alive per room, game or device | [Channels › Handlers](guides/channels.md#handlers) |
+| show prices or a status to thousands of users from one source | [Feeds and watchlists](guides/feeds.md) |
+| let users keep several watchlists and change them while connected | [Feeds › Watching](guides/feeds.md#watching) |
 | check who may join a channel, and see who is there | [Channels › Authorization](guides/channels.md#authorization), [Presence](guides/channels.md#presence) |
 | stream a task's progress or output (AI tokens) to a browser | [Results › Live events](guides/results-and-logs.md#live-events) |
 

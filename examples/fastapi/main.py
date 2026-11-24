@@ -54,14 +54,34 @@ async def room_socket(ws: WebSocket, room: str) -> None:
             forwarding.cancel()
 
 
-@api.websocket("/ticker/{symbol}")
-async def ticker_socket(ws: WebSocket, symbol: str) -> None:
-    """Every uvicorn process and every user shares the one feed of this symbol."""
+@api.websocket("/ws")
+async def watchlists(ws: WebSocket) -> None:
+    """
+    One socket, many watchlists, driven by JSON requests from the browser.
+
+    Requests::
+
+        {"op": "subscribe", "group": "watchlist", "channels": ["quote:AAPL"]}
+        {"op": "unsubscribe", "group": "watchlist"}
+        {"op": "list"}
+        {"op": "restore"}
+
+    Replies come back on the same socket, and so does every update, as
+    ``{"op": "data", "channel": "quote:AAPL", "data": {...}, "cached": false}``.
+    """
     await ws.accept()
-    async with app.channels.connect(f"ticker:{symbol}", identity="anonymous") as conn:
+    user = ws.query_params.get("user", "demo")  # your login check goes here
+    async with app.feeds.watch(f"user:{user}") as watch:
+
+        async def push() -> None:
+            async for update in watch:
+                await ws.send_json(update.to_dict())
+
+        pusher = asyncio.create_task(push())
         try:
-            async for message in conn:
-                if message.kind == "message":
-                    await ws.send_json(message.data)
+            while True:
+                await ws.send_json(await watch.handle(await ws.receive_json()))
         except WebSocketDisconnect:
             pass
+        finally:
+            pusher.cancel()

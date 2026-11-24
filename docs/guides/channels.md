@@ -5,8 +5,10 @@ programs publish to it and read from it, and a channel can have one
 long-running **handler** that the cluster keeps alive.
 
 Use them for websocket rooms (every web server sees the same messages),
-stateful loops per key (a game, a device session, a market feed), and
-streaming output from tasks to browsers.
+stateful loops per key (a game, a device session, a chat), and streaming
+output from tasks to browsers. For data many users watch (prices, a status
+page), use a [feed](feeds.md): it is built on channels and adds groups,
+last values and a source that runs only while watched.
 
 ## Channel or task?
 
@@ -17,7 +19,8 @@ web servers and users there are.
 | You need | Use |
 |---|---|
 | Work done once, anywhere, with retries and limits | a [task](tasks.md) |
-| One thing per key that stays alive: a shared feed, a session with state | a channel handler |
+| A shared source many users watch (prices, status, queue depth) | a [feed](feeds.md) |
+| One thing per key that stays alive: a session with state | a channel handler |
 | Messages for one key processed in order, with saved state | a channel handler |
 | Live push to many connected users | a channel (readers) |
 | A result or alert that must not be lost | a task or your database; use the channel to deliver it live |
@@ -153,36 +156,11 @@ async for message in app.channels.consume("jobs", group="resizers"):
 
 ## Patterns
 
-### One feed, many watchers
+### A shared feed (market data, status pages)
 
-A market app where thousands of users watch the same tickers: the upstream
-feed should be opened once per ticker for the whole cluster, not once per
-user or per web server.
-
-```python
-@app.channel(
-    "ticker:{symbol}", timeout=None, retries=5, max_tasks=500, idle_timeout="1m"
-)
-async def ticker(ch: Channel, symbol: str) -> None:
-    feed = asyncio.create_task(pump_prices(ch, symbol))  # opens ONE upstream feed
-    try:
-        async for _ in ch.inbox():  # joins and leaves; ends when nobody is watching
-            pass
-    finally:
-        feed.cancel()
-```
-
-Each web server connects its users with `app.channels.connect("ticker:AAPL")`
-and forwards to their sockets. The first reader starts the handler (a
-connecting reader sends a `join` to it), `idle_timeout` stops it when nobody
-is left, and if its machine dies another one starts it again and the feed
-reopens there. Ticks sent while it moves are not replayed, so a feed that
-can't miss ticks has to catch up from its source. Ticks are published to
-all readers; to give each user their own alerts, add an `authorize` and
-filter in the web server, or publish to `user:<id>` channels.
-
-Run it: `python -m shop ticker` in [test-preview](../../test-preview/README.md),
-and `WS /ticker/{symbol}` in [examples/fastapi](../../examples/fastapi/README.md).
+Don't write this by hand: a [feed](feeds.md) is one function that SynTasks
+runs once for the whole cluster, only while somebody watches, with groups of
+keys that users subscribe to at runtime.
 
 ### A conversation per user (a chat bot)
 

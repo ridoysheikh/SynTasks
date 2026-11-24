@@ -32,6 +32,10 @@ machines.
 - **Realtime.** Live task events and streamed output; channels with
   replay, authorization, presence and long-running handlers kept alive
   once per channel.
+- **Feeds and watchlists.** One function per data source (prices, a status
+  page), run once for the whole cluster and only while somebody watches it;
+  users keep groups of keys they subscribe to and drop while connected,
+  with saved groups, last values and health.
 
 > **Status:** early development. APIs may change until the first stable
 > release.
@@ -108,7 +112,7 @@ Short pages, one question each. Start at **[docs/](docs/README.md)**.
 | [Install](docs/getting-started/install.md) · [Quickstart](docs/getting-started/quickstart.md) | get going |
 | [Modules](docs/guides/modules.md) · [Tasks](docs/guides/tasks.md) · [Results and logs](docs/guides/results-and-logs.md) · [Callbacks and batches](docs/guides/callbacks-and-batches.md) · [Dependencies](docs/guides/dependencies.md) | write tasks |
 | [Configuration](docs/guides/configuration.md) · [Queues](docs/guides/queues.md) · [Limits](docs/guides/limits.md) · [Cluster](docs/guides/cluster.md) | run them in production |
-| [Scheduling](docs/guides/scheduling.md) · [Runtime schedules](docs/guides/runtime-schedules.md) · [Channels](docs/guides/channels.md) | on time, for users, and long-running |
+| [Scheduling](docs/guides/scheduling.md) · [Runtime schedules](docs/guides/runtime-schedules.md) · [Channels](docs/guides/channels.md) · [Feeds](docs/guides/feeds.md) | on time, for users, and long-running |
 | [Config](docs/reference/config.md) · [CLI](docs/reference/cli.md) · [Python API](docs/reference/python-api.md) | reference |
 
 ## Optional extras

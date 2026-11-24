@@ -246,6 +246,40 @@ async def test_sharded_feed_splits_keys_over_handlers(app_factory: AppFactory) -
     assert all(owner is not None for owner in owners.values())
 
 
+async def test_feed_moves_to_another_worker_when_its_owner_stops(
+    app_factory: AppFactory,
+) -> None:
+    def config(c: Config) -> None:
+        c.channels.lease_ttl = 1.0
+
+    calls: Counter[str] = Counter()
+    first, second, web = app_factory(config), app_factory(config), app_factory(config)
+    for app in (first, second, web):
+        poll_feed(app, calls)
+    workers = {}
+    for app in (first, second):
+        stop = asyncio.Event()
+        workers[app.cluster.node_id] = (stop, asyncio.create_task(app.run_worker(stop)))
+    try:
+        await wait_until(lambda: first.receiver_ready() and second.receiver_ready())
+        async with web.feeds.watch("u") as watch:
+            await watch.subscribe("g", ["quote:AAPL"])
+            await wait_until(lambda: calls["AAPL"] >= 3)
+            owner = (await web.channels.info("feed:quote:0")).owner
+            assert owner in workers
+            stop, task = workers.pop(owner)  # the worker that runs the feed leaves
+            stop.set()
+            await asyncio.wait_for(task, 30)
+            before = calls["AAPL"]
+            await wait_until(lambda: calls["AAPL"] > before + 3, timeout=15)
+            assert (await web.channels.info("feed:quote:0")).owner in workers
+            assert await watch.receive(timeout=5) is not None  # still being served
+    finally:
+        for stop, task in workers.values():
+            stop.set()
+            await asyncio.wait_for(task, 30)
+
+
 async def test_poll_feed_publishes_only_changes(app_factory: AppFactory) -> None:
     rounds = 0
     app = app_factory()

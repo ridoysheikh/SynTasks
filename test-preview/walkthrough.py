@@ -137,11 +137,12 @@ STEPS: list[tuple[str, str, list[list[str]]]] = [
         [["shop", "live"]],
     ),
     (
-        "One feed, many watchers",
-        "ticker:{symbol} has one handler in the whole cluster that owns the upstream "
-        "feed. Five users watching AAPL and one watching MSFT cost two feeds, not six; "
-        "everyone sees the same ticks.",
-        [["shop", "ticker"]],
+        "Feeds: watchlists, groups, runtime subscriptions",
+        "quote is a feed: one function that asks the vendor for each watched symbol, "
+        "run once for the whole cluster. Users subscribe groups of symbols while "
+        "connected; the feed only works on what somebody watches, keeps the last "
+        "value, and groups are saved per user.",
+        [["shop", "watchlists"]],
     ),
 ]
 

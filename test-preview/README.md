@@ -49,7 +49,7 @@ by hand (with workers running: `syntasks worker` in this folder).
 12. **`posts`**: users schedule their own posts (a runtime template): owners, tags, metadata, the per-owner cap, an edit with a version, bulk pause and cancel.
 13. **`campaign`**: 40 emails as one batch: paused, resumed, cancelled, with one summary at the end.
 14. **`live`**: a channel whose handler runs once in the cluster: authorization, presence, join messages.
-15. **`ticker`**: `ticker:{symbol}` has one handler (one upstream feed) in the whole cluster; five watchers of AAPL and one of MSFT cost two feeds, and everyone sees the same ticks.
+15. **`watchlists`**: the `quote` feed: a user's groups of symbols subscribed at runtime, one vendor call per symbol however many watch it, linger after the last watcher leaves, saved groups restored in a new tab with the cached last value.
 16. **A machine dies**: machine A is killed with `SIGKILL`. Its nodes go away, its work moves to machine B, the channel handler keeps its state and the schedule keeps firing.
 
 Worker logs (audit callbacks, posts, the campaign summary) are in the
@@ -63,7 +63,7 @@ folder the walkthrough prints.
 | `shop/app.py` | the root `SynTasks(...)` with the default limits, one queue, and `app.extends(...)` of the three modules |
 | `shop/orders.py` | `Module("orders", ...)`: retries, a callback, order per key, cluster limits, `call`, timeouts, isolation, events |
 | `shop/marketing.py` | `Module("marketing", ...)`: `every` and `calendar` schedules, a runtime template, `fair`, `debounce`, campaign tasks |
-| `shop/live.py` | `Module("live", ...)`: a channel handler with `authorize`, and a shared per-symbol feed handler |
+| `shop/live.py` | `Module("live", ...)`: a channel handler with `authorize`, and the `quote` feed |
 | `shop/__main__.py` | `python -m shop <command>`: one command per feature |
 | `walkthrough.py` | runs the story above |
 | `docker-compose.yml` | Redis on port 55460, if you'd rather not install `redis-server` |

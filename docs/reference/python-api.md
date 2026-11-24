@@ -161,6 +161,43 @@ Client side (`app.channels`):
 `ChannelMessage`: `id`, `data`, `sender`, `kind`, `time_ms`.
 `ConnectRequest`: `name`, `params`, `identity`, `meta`, `action`.
 
+## Feeds and watching
+
+`@app.feed(kind, *, every=None, linger="30s", keep_last="7d", shards=1, concurrency=20, normalize=None, **limits)`
+on the app and every module: with `every` the function is `async def fetch(key)`
+(return `None` for "nothing new"), without it `async def run(feed: Feed)`.
+See [Feeds and watchlists](../guides/feeds.md).
+
+| `Feed` (in a streamed feed) | |
+| --- | --- |
+| `await feed.changes()` | `(added, removed)` since the last call |
+| `feed.watched` | keys watched now |
+| `await feed.publish(key, data)` | a snapshot to the key's watchers; kept as the last value |
+| `await feed.set_state(name)` | the feed's health, e.g. `"degraded"` |
+
+`app.feeds` (`FeedManager`):
+
+| Member | Does |
+| --- | --- |
+| `app.feeds.watch(identity, *, max_channels=None)` | a `Watch` for one connection (`async with`) |
+| `await app.feeds.publish(kind, key, data)` | publish a snapshot from anywhere |
+| `await app.feeds.states()` | `{kind: "live" \| "degraded" \| ... \| "idle"}` |
+
+`Watch`:
+
+| Member | Does |
+| --- | --- |
+| `await watch.subscribe(group, channels)` | `(subscribed, rejected)`; channels are `"kind:key"` |
+| `await watch.unsubscribe(group, channels=None)` | `(unsubscribed, rejected)`; no channels drops the group |
+| `watch.groups()` / `await watch.saved()` | groups joined here / saved for the identity |
+| `await watch.restore()` | `(restored, rejected)`: join the saved groups |
+| `await watch.handle(request)` | run a JSON request (`subscribe`, `unsubscribe`, `list`, `restore`); returns the reply |
+| `await watch.receive(timeout=None)`, `async for update in watch` | the next `Update`, or `None` |
+| `await watch.close()` | stop (or leave the `async with`) |
+
+`Update(op, channel, data, cached)`: `op` is `"data"` or `"status"`;
+`to_dict()`. Errors: `WatchError` (`code`, `description`).
+
 ## Queues, running tasks, logs
 
 `app.queues` (`QueueManager`), all `async`: `names()`, `list()`,

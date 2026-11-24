@@ -1,10 +1,8 @@
-"""Live channels: one handler per channel for the whole cluster."""
+"""Live data: a channel with a handler, and a feed shared by every watcher."""
 
-import asyncio
 import random
 
 from syntasks import Channel, ConnectRequest, Module
-from syntasks.channels.channel import ChannelFencedError
 
 module = Module("live", timeout=None, retries=5, max_tasks=10)
 STAFF = {"staff:ada", "staff:alan"}
@@ -30,36 +28,20 @@ async def live_sales(ch: Channel) -> None:
         )
 
 
-async def pump_prices(ch: Channel, symbol: str) -> None:
-    """Stand-in for the one upstream market feed of a symbol."""
-    price = 100.0 + random.random() * 50
-    tick = 0
-    try:
-        while True:
-            tick += 1
-            price = round(price + random.uniform(-1, 1), 2)
-            await ch.publish(
-                {
-                    "symbol": symbol,
-                    "tick": tick,
-                    "price": price,
-                    "feed": ch.state["feeds_opened"],
-                    "by": ch.consumer,
-                }
-            )
-            await ch.sleep(0.2)
-    except ChannelFencedError:
-        return  # another node owns the channel now
+@module.feed("quote", every="300ms", linger="2s", normalize=str.upper)
+async def quote(key: str) -> dict[str, float | int | str]:
+    """
+    The one place that asks the "vendor" for a symbol.
 
+    It is counted in Redis so the demo can show how often it ran: once per
+    round per watched symbol, however many users watch it.
+    """
+    from .app import app  # noqa: PLC0415
 
-@module.channel("ticker:{symbol}", idle_timeout="3s")
-async def ticker(ch: Channel, symbol: str) -> None:
-    """One feed per symbol in the whole cluster, however many users watch it."""
-    ch.state["feeds_opened"] = ch.state.get("feeds_opened", 0) + 1
-    await ch.save_state()
-    feed = asyncio.create_task(pump_prices(ch, symbol))
-    try:
-        async for _ in ch.inbox():  # joins and leaves; ends when nobody watches
-            pass
-    finally:
-        feed.cancel()
+    calls = await app.redis.incr(app.keys("demo", "vendor", key))
+    base = 100 + sum(map(ord, key)) % 50
+    return {
+        "symbol": key,
+        "price": round(base + random.uniform(-1, 1), 2),
+        "call": calls,
+    }

@@ -14,7 +14,7 @@ uvicorn main:api                # another
 | --- | --- |
 | `POST /reports/{month}` | sends `build_report` and returns its task id at once |
 | `GET /reports/{task_id}` | progress while it runs (`ProgressTracker`), then the result |
-| `WS /ticker/{symbol}` | prices of a symbol: one feed for the whole cluster, however many users and web servers watch it |
+| `WS /ws?user=ada` | watchlists: subscribe and unsubscribe groups of `quote:SYMBOL` channels while connected; saved per user; one feed for the whole cluster |
 | `WS /rooms/{room}` | a chat room: what you send goes to the room's handler, which numbers it and broadcasts it to everyone connected |
 
 ```bash
@@ -27,10 +27,19 @@ Stop that worker and the next message starts it on another one, with the
 count it saved. Every uvicorn process can serve the same room; their readers
 share one Redis connection per process.
 
-The ticker handler opens one (simulated) upstream feed per symbol on one
-worker. Connect with several `websocat ws://localhost:8000/ticker/AAPL` and
-they all get the same prices from the same `by` node; when the last one
-closes, the feed stops after `idle_timeout`.
+Watchlists (the `quote` feed in `tasks.py`, the socket in `main.py`):
+
+```text
+websocat 'ws://localhost:8000/ws?user=ada'
+{"op": "subscribe", "group": "watchlist", "channels": ["quote:aapl", "quote:MSFT"]}
+{"op": "subscribe", "group": "header", "channels": ["quote:AAPL"]}
+{"op": "unsubscribe", "group": "watchlist"}      # AAPL stays: the header holds it
+```
+
+Open the socket from several terminals and users: `quote()` still runs once
+a second per symbol in total, on one worker, and stops 30 seconds after the
+last watcher leaves. A new tab sends `{"op": "restore"}` to get back the
+groups saved for its user, and a new subscriber gets the last price at once.
 
 See [Channels](../../docs/guides/channels.md) and
 [Results and logs](../../docs/guides/results-and-logs.md).

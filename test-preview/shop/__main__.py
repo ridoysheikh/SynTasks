@@ -13,7 +13,7 @@ The shop's command line: each command sends work to the running workers.
     python -m shop posts           users schedule their own posts (runtime schedules)
     python -m shop campaign        a campaign: pause, resume, progress, summary
     python -m shop live            the live channel: authorization, presence, takeover
-    python -m shop ticker          one upstream feed per symbol, many watchers
+    python -m shop watchlists      feeds: groups, runtime subscribe, shared fetching
 """
 
 import argparse
@@ -268,31 +268,67 @@ async def live() -> None:
                 break
 
 
-async def watch(symbol: str, who: str, ticks: int) -> list[dict[str, Any]]:
-    seen: list[dict[str, Any]] = []
-    async with app.channels.connect(f"ticker:{symbol}", identity=who) as conn:
-        async for message in conn:
-            if message.kind == "message" and "tick" in (message.data or {}):
-                seen.append(message.data)
-                if len(seen) == ticks:
-                    break
-    return seen
+async def vendor_calls(*symbols: str) -> dict[str, int]:
+    keys = [app.keys("demo", "vendor", s) for s in symbols]
+    return {
+        s: int(v or 0) for s, v in zip(symbols, await app.redis.mget(keys), strict=True)
+    }
 
 
-async def ticker() -> None:
-    watchers = [("AAPL", f"user:{n}") for n in range(5)] + [("MSFT", "user:9")]
-    results = await asyncio.gather(*(watch(s, who, 5) for s, who in watchers))
-    for symbol in ("AAPL", "MSFT"):
-        mine = [r for (s, _), r in zip(watchers, results, strict=True) if s == symbol]
-        feeds = {tick["feed"] for r in mine for tick in r}
-        nodes = {tick["by"] for r in mine for tick in r}
-        common = set.intersection(*({t["tick"] for t in r} for r in mine))
-        print(
-            f"  {symbol}: {len(mine)} watchers, upstream feeds opened: "
-            f"{len(feeds)}, handler nodes: {len(nodes)}, "
-            f"ticks every watcher saw: {len(common) if len(mine) > 1 else 'n/a'}"
+async def collect(watch: Any, seconds: float) -> dict[str, dict[str, Any]]:
+    """The newest update of each channel that arrives in ``seconds``."""
+    newest: dict[str, dict[str, Any]] = {}
+    end = time.monotonic() + seconds
+    while (left := end - time.monotonic()) > 0:
+        update = await watch.receive(timeout=left)
+        if update is not None and update.op == "data":
+            newest[update.channel] = update.to_dict()
+    return newest
+
+
+async def watchlists() -> None:
+    await app.redis.delete(
+        *(app.keys("demo", "vendor", s) for s in ("AAPL", "MSFT", "NVDA"))
+    )
+    crowd = [app.feeds.watch(f"user:{n}") for n in range(4)]
+    for watch in crowd:
+        await watch.subscribe("main", ["quote:AAPL"])
+    async with app.feeds.watch("user:ada") as tab1:
+        ok, rejected = await tab1.subscribe(
+            "watchlist", ["quote: aapl ", "quote:MSFT", "quote:NVDA", "bonds:US10Y"]
         )
-    print("  one feed per symbol, shared by everyone watching it")
+        await tab1.subscribe("header", ["quote:AAPL"])
+        print(f"  ada's watchlist: {ok}; rejected: {rejected}")
+        seen = await collect(tab1, 2.0)
+        prices = {c: u["data"]["price"] for c, u in sorted(seen.items())}
+        print(f"  after 2s she has prices: {prices}")
+        calls = await vendor_calls("AAPL", "MSFT", "NVDA")
+        print(f"  vendor calls: {calls}  (AAPL has 5 watchers, MSFT and NVDA one each)")
+
+        await tab1.unsubscribe("watchlist")
+        print(f"  dropped her watchlist; still joined: {tab1.groups()}")
+        await asyncio.sleep(3)  # the feed lingers for 2s after the last watcher
+        before = await vendor_calls("AAPL", "MSFT", "NVDA")
+        await asyncio.sleep(1.5)
+        after = await vendor_calls("AAPL", "MSFT", "NVDA")
+        grew = {s: after[s] - before[s] for s in after}
+        print(f"  1.5s after the linger, vendor calls grew by {grew}")
+        print(
+            "  the header still holds AAPL; nobody watches MSFT and NVDA, so they stopped"
+        )
+
+    async with app.feeds.watch("user:ada") as tab2:
+        print(f"  a new tab of ada: joined {tab2.groups()}, saved {await tab2.saved()}")
+        restored, _ = await tab2.restore()
+        update = await tab2.receive(timeout=2)
+        assert update is not None
+        print(
+            f"  restore() joined {restored}; first update is the last value "
+            f"(cached={update.cached}): {update.data}"
+        )
+    print(f"  feed health: {await app.feeds.states()}")
+    for watch in crowd:
+        await watch.close()
 
 
 COMMANDS: dict[str, Any] = {
@@ -308,7 +344,7 @@ COMMANDS: dict[str, Any] = {
     "posts": lambda a: posts(),
     "campaign": lambda a: campaign(),
     "live": lambda a: live(),
-    "ticker": lambda a: ticker(),
+    "watchlists": lambda a: watchlists(),
 }
 
 

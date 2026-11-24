@@ -2,8 +2,7 @@ import asyncio
 import random
 from typing import Annotated
 
-from syntasks import Channel, ConnectRequest, SynTasks, SynTasksDepends
-from syntasks.channels.channel import ChannelFencedError
+from syntasks import Channel, SynTasks, SynTasksDepends
 from syntasks.depends.progress_tracker import ProgressTracker, TaskState
 
 app = SynTasks(timeout="5m", retries=0, max_tasks=None)
@@ -33,29 +32,19 @@ async def room(ch: Channel, room: str) -> None:
         await ch.save_state()
 
 
-def watch_only(request: ConnectRequest) -> bool:
-    """Anyone may watch a ticker; nobody may send to it."""
-    return request.action == "read"
+PRICES: dict[str, float] = {}
 
 
-async def pump_prices(ch: Channel, symbol: str) -> None:
-    """Stand-in for the single upstream feed of a symbol (a vendor websocket, say)."""
-    price = 100.0 + random.random() * 50
-    try:
-        while True:
-            price = round(price + random.uniform(-1, 1), 2)
-            await ch.publish({"symbol": symbol, "price": price, "by": ch.consumer})
-            await ch.sleep(0.5)
-    except ChannelFencedError:
-        return  # another worker owns the channel now
+@app.feed("quote", every="1s", linger="30s", normalize=str.upper)
+async def quote(key: str) -> dict[str, float | str]:
+    """
+    The one place that asks the vendor for a symbol.
 
-
-@app.channel("ticker:{symbol}", idle_timeout="30s", authorize=watch_only)
-async def ticker(ch: Channel, symbol: str) -> None:
-    """One feed per symbol in the whole cluster, however many users watch it."""
-    feed = asyncio.create_task(pump_prices(ch, symbol))
-    try:
-        async for _ in ch.inbox():  # joins and leaves; ends when nobody watches
-            pass
-    finally:
-        feed.cancel()
+    The feed calls this once a second for every symbol somebody watches, on
+    one worker for the whole cluster, however many users and web servers are
+    watching, and stops 30 seconds after the last one leaves. Here the
+    "vendor" is a random walk.
+    """
+    price = PRICES.get(key) or 100.0 + (sum(map(ord, key)) % 50)
+    PRICES[key] = round(price + random.uniform(-1, 1), 2)
+    return {"symbol": key, "price": PRICES[key]}
