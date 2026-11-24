@@ -6,7 +6,6 @@ Built-in Redis support, implemented with the standard library only.
 * :class:`RedisListBroker` - simple, fast broker on a list.
 * :class:`RedisPubSubBroker` - broadcast broker.
 * :class:`RedisResultBackend` - results and progress.
-* :class:`RedisScheduleSource` - persistent schedules.
 """
 
 from syntasks.redis.broker import (
@@ -28,7 +27,6 @@ from syntasks.redis.errors import (
 )
 from syntasks.redis.pool import ConnectionPool, SentinelConnectionPool
 from syntasks.redis.result_backend import RedisResultBackend
-from syntasks.redis.schedule_source import RedisScheduleSource
 
 __all__ = [
     "AuthenticationError",
@@ -47,7 +45,6 @@ __all__ = [
     "RedisListBroker",
     "RedisPubSubBroker",
     "RedisResultBackend",
-    "RedisScheduleSource",
     "RedisStreamBroker",
     "RedisTimeoutError",
     "ResponseError",

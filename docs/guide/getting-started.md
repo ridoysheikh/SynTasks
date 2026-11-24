@@ -1,252 +1,89 @@
 ---
-title: Getting started
 order: 2
 ---
 
 # Getting started
 
-## Installation
+## Install
 
-You can install syntasks from pypi or directly from git using pip:
-
-::: tabs
-
-@tab pypi
-
-```bash:no-line-numbers
-pip install syntasks
-```
-
-@tab git
-
-```bash:no-line-numbers
-pip install git+https://github.com/synlor/syntasks.git
-```
-
-:::
-
-After installation of the core library, you need to find the broker that fits you. You can do it using [PyPI](https://pypi.org/search/?q=syntasks) search.
-
-::: info Cool tip!
-
-We highly recommend [taskiq-aio-pika](https://pypi.org/project/taskiq-aio-pika/) or [taskiq-nats](https://pypi.org/project/taskiq-nats/) as the broker and [taskiq-redis](https://pypi.org/project/taskiq-redis/) as the result backend for production use.
-
-:::
-
-## Running tasks
-
-Now you need to create a python module with broker declaration. It's just a plain python file with the variable of your broker. For this particular example, I'm going to use the `InMemoryBroker`.
-
-::: caution Important note
-The InMemoryBroker doesn't send any data over the network,
-and you cannot use this broker in
-a real-world scenario, but it's still useful for
-local development if you do not want to
-set up a syntasks worker.
-
-:::
-
-```python
-# broker.py
-from syntasks import InMemoryBroker
-
-broker = InMemoryBroker()
-```
-
-And that's it. Now let's add some tasks and the main function. You can add tasks in separate modules. You can find more information about that further. Also, we call the `startup` method at the beginning of the `main` function.
-
-@[code python](../examples/introduction/inmemory_run.py)
-
-::: warning Cool warning!
-
-Calling the `startup` method is necessary. If you don't call it, you may get undefined behavior.
-
-:::
-
-If you run this code, you will get this in your terminal:
-
-```bash:no-line-numbers
-❯ python broker.py
-Task execution took: 7.3909759521484375e-06 seconds.
-Returned value: 2
-```
-
-Ok, the code of the task execution is a little bit fancier than an ordinary function call, but it's still relatively simple to understand. To send a task to the broker,
-you need to call the `.kiq` method on the function,
-it returns the `SynTasksTask` object that can check whether the result is ready
-or not. Also it has methods to wait for the result to become available.
-
-You can get more information about syntasks types, CLI and internal structure in the "[Architecture overview](./architecture-overview.md)" section.
-
-## Distributed run
-
-Now let's change InMemoryBroker to some distributed broker instead. In this example we are going to use
-broker that works with RabbitMQ.
-
-At first we must install the [taskiq-aio-pika](https://pypi.org/project/taskiq-aio-pika/) lib.
-
-```bash:no-line-numbers
-pip install taskiq-aio-pika
-```
-
-After the installation, replace the broker we defined earlier with the broker from the `taskiq-aio-pika`.
-
-```python
-from taskiq_aio_pika import AioPikaBroker
-
-broker = AioPikaBroker('amqp://guest:guest@localhost:5672')
-```
-
-Also, the AioPika broker requires calling startup before using it. Add this line at the beginning of the
-main function.
-
-```python
-await broker.startup()
-```
-
-That's all you need to do.
-
-::: details Complete code
-
-@[code python](../examples/introduction/aio_pika_broker.py)
-
-:::
-
-Let's run the worker process. First of all, we need RabbitMQ up and running. I highly recommend you use docker.
-
-::: tabs
-
-@tab linux|macos
+SynTasks isn't on PyPI yet; install it from source:
 
 ```bash
-docker run --rm -d \
-    -p "5672:5672" \
-    -p "15672:15672" \
-    --env "RABBITMQ_DEFAULT_USER=guest" \
-    --env "RABBITMQ_DEFAULT_PASS=guest" \
-    --env "RABBITMQ_DEFAULT_VHOST=/" \
-    rabbitmq:3.8.27-management-alpine
+pip install git+https://github.com/synlor/syntasks
 ```
 
-@tab windows
+You also need a Redis server (6.2 or newer).
 
-```powershell
-docker run --rm -d ^
-    -p "5672:5672" ^
-    -p "15672:15672" ^
-    --env "RABBITMQ_DEFAULT_USER=guest" ^
-    --env "RABBITMQ_DEFAULT_PASS=guest" ^
-    --env "RABBITMQ_DEFAULT_VHOST=/" ^
-    rabbitmq:3.8.27-management-alpine
-```
-
-:::
-
-Now we need to start worker process by running syntasks cli command. You can get more info about the CLI in the [CLI](./cli.md) section.
-
-```bash:no-line-numbers
-syntasks worker broker:broker
-```
-
-After the worker is up, we can run our script as an ordinary python file and see how the worker executes tasks.
-
-```bash:no-line-numbers
-$ python broker.py
-Task execution took: 0.0 seconds.
-Returned value: None
-```
-
-But the printed result value is not correct. That happens because we didn't provide any result backend that can store results
-of task execution.
-To store results, we can use the [taskiq-redis](https://pypi.org/project/taskiq-redis/) library.
-
-```bash
-pip install taskiq-redis
-```
-
-After the installation, add a new result backend to the broker.
+## Write an app
 
 ```python
-from taskiq_redis import RedisAsyncResultBackend
+# billing/app.py
+from syntasks import SynTasks
 
-broker = AioPikaBroker(
-    "amqp://guest:guest@localhost:5672",
-).with_result_backend(RedisAsyncResultBackend("redis://localhost"))
+app = SynTasks()
+
+
+@app.task(timeout="30s")
+async def add(a: int, b: int) -> int:
+    return a + b
 ```
 
-Now we need to start redis.
+`SynTasks()` reads `syntasks.toml` from the current directory (or
+`[tool.syntasks]` in `pyproject.toml`). Without a file it uses defaults:
+Redis on `localhost:6379`, one queue called `default`.
 
-::: tabs
+## Configure
 
-@tab linux|macos
+```toml
+# syntasks.toml
+[app]
+name = "billing"           # namespace in Redis
+app = "billing.app:app"    # where workers find the app
+
+[redis]
+url = "${REDIS_URL:-redis://localhost:6379/0}"
+
+[worker]
+processes = 4
+max_async_tasks = 200
+```
+
+Check it with `syntasks config check`. Every setting is described in the
+[configuration reference](../reference/config.md).
+
+## Run workers
 
 ```bash
-docker run --rm -d \
-    -p "6379:6379" \
-    redis
+syntasks worker
 ```
 
-@tab windows
+This starts `worker.processes` processes on this machine. Run the same
+command on as many machines as you like; they share the work through
+Redis.
 
-```powershell
-docker run --rm -d ^
-    -p "6379:6379" ^
-    redis
-```
-
-:::
-
-::: details Complete code
-
-@[code python](../examples/introduction/full_example.py)
-
-:::
-
-Let's run syntasks once again. The command is the same.
-
-```bash:no-line-numbers
-syntasks worker broker:broker
-```
-
-Now, if we run this file with python, we can get the correct results with a valid execution time.
-
-```bash
-$ python broker.py
-Task execution took: 1.0013580322265625e-05 seconds.
-Returned value: 2
-```
-
-Continue reading to get more information about syntasks internals.
-
-
-## Timeouts
-
-If you want to restrict the amount of time you want to run a task,
-just add timeout label to the task.
-
-You can do it either with decorator or when calling the task.
-
-::: tabs
-
-@tab decorator
+## Send tasks
 
 ```python
-@broker.task(timeout=0.1)
-async def mytask():
-    await asyncio.sleep(2)
+import asyncio
+
+from billing.app import add, app
+
+
+async def main() -> None:
+    task = await add.kiq(1, 2)              # send
+    result = await task.wait_result(timeout=10)
+    print(result.return_value)               # 3
+    await app.shutdown()
+
+
+asyncio.run(main())
 ```
 
-@tab when calling
+`kiq` returns as soon as the message is in Redis. `wait_result` blocks
+until a worker stores the result; it doesn't poll.
 
-```python
-await my_task.kicker().with_labels(timeout=0.3).kiq()
-```
+## Next
 
-:::
-
-::: caution Cool alert
-
-We use [run_in_executor](https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.run_in_executor) method to run sync functions. Timeouts will raise a TimeoutError, but
-synchronous function may not stop from execution. This is a constraint of python.
-
-:::
+- [Tasks](tasks.md): options, retries, routing.
+- [Scheduling](scheduling.md): run tasks every N seconds, on cron, once.
+- [Limits](limits.md): concurrency, rate limits, timeouts, memory.

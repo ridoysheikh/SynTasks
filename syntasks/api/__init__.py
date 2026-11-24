@@ -1,11 +1,9 @@
 """
-Package to run some syntasks functions programmatically.
+Run a receiver programmatically, for generic brokers.
 
-This package is useful for managing dynamically created brokers and
-scheduler instances.
+SynTasks apps use ``await app.run_worker(stop_event)`` instead.
 """
 
 from syntasks.api.receiver import run_receiver_task
-from syntasks.api.scheduler import run_scheduler_task
 
-__all__ = ["run_receiver_task", "run_scheduler_task"]
+__all__ = ["run_receiver_task"]

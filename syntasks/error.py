@@ -66,6 +66,15 @@ class Error(Exception):
         payload = {field: getattr(self, field) for field in annotations}
         super().__init__(template.format(**payload))
 
+    def __reduce__(self) -> tuple[object, ...]:
+        """Pickle support: rebuild from the declared fields."""
+        fields = {
+            name: getattr(self, name)
+            for name in self._collect_annotations()
+            if hasattr(self, name)
+        }
+        return (_rebuild, (type(self), fields))
+
     def __repr__(self) -> str:
         """Represent exception with all declared fields."""
         annotations = self._collect_annotations()
@@ -75,3 +84,8 @@ class Error(Exception):
             return f"{module}.{qualname}()"
         args = ", ".join(f"{field}={getattr(self, field)!r}" for field in annotations)
         return f"{module}.{qualname}({args})"
+
+
+def _rebuild(cls: type[Error], fields: dict[str, object]) -> Error:
+    """Recreate a pickled :class:`Error`."""
+    return cls(**fields)

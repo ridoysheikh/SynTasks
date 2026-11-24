@@ -1,7 +1,6 @@
 import sys
 from collections.abc import Callable, Coroutine
 from copy import copy
-from datetime import datetime, timedelta
 from types import CoroutineType
 from typing import (
     TYPE_CHECKING,
@@ -9,18 +8,14 @@ from typing import (
     Generic,
     ParamSpec,
     TypeVar,
-    Union,
     overload,
 )
 
 from syntasks.kicker import AsyncKicker
-from syntasks.scheduler.created_schedule import CreatedSchedule
 from syntasks.task import AsyncSynTasksTask
 
 if TYPE_CHECKING:  # pragma: no cover
     from syntasks.abc.broker import AsyncBroker
-    from syntasks.abc.schedule_source import ScheduleSource
-    from syntasks.scheduler.scheduled_task import CronSpec
 
 _T = TypeVar("_T")
 _FuncParams = ParamSpec("_FuncParams")
@@ -136,83 +131,21 @@ class AsyncSynTasksDecoratedTask(Generic[_FuncParams, _ReturnType]):
         """
         return await self.kicker().kiq(*args, **kwargs)
 
-    async def schedule_by_cron(
-        self,
-        source: "ScheduleSource",
-        cron: Union[str, "CronSpec"],
-        *args: _FuncParams.args,
-        **kwargs: _FuncParams.kwargs,
-    ) -> CreatedSchedule[_ReturnType]:
+    async def schedule(self, **options: Any) -> Any:
         """
-        Schedule task to run on cron.
+        Create a dynamic schedule for this task (SynTasks apps only).
 
-        This method requires a schedule source,
-        which is capable of dynamically adding new schedules.
+        Same arguments as :meth:`syntasks.scheduler.ScheduleManager.create`,
+        e.g. ``await check.schedule(every="1s", ttl="2h", kwargs={...})``.
 
-        :param source: schedule source.
-        :param cron: cron string or a CronSpec instance.
-        :param args: function's arguments.
-        :param kwargs: function's key word arguments.
-        :return: schedule id.
+        :param options: schedule options.
+        :raises TypeError: if the task's broker is not a SynTasks app.
+        :return: the created schedule.
         """
-        return await self.kicker().schedule_by_cron(
-            source,
-            cron,
-            *args,
-            **kwargs,
-        )
-
-    async def schedule_by_interval(
-        self,
-        source: "ScheduleSource",
-        interval: int | timedelta,
-        *args: _FuncParams.args,
-        **kwargs: _FuncParams.kwargs,
-    ) -> CreatedSchedule[_ReturnType]:
-        """
-        Schedule the task to start using an interval.
-
-        This method requires a schedule source,
-        which is capable of dynamically adding new schedules.
-
-        :param source: schedule source.
-        :param interval: interval in seconds or timedelta instance.
-        :param args: function's arguments.
-        :param kwargs: function's key word arguments.
-        :return: schedule id.
-        """
-        return await self.kicker().schedule_by_interval(
-            source,
-            interval,
-            *args,
-            **kwargs,
-        )
-
-    async def schedule_by_time(
-        self,
-        source: "ScheduleSource",
-        time: datetime,
-        *args: _FuncParams.args,
-        **kwargs: _FuncParams.kwargs,
-    ) -> CreatedSchedule[_ReturnType]:
-        """
-        Schedule task to run on specific time.
-
-        This method requires a schedule source,
-        which is capable of dynamically adding new schedules.
-
-        :param source: schedule source.
-        :param time: time to run task.
-        :param args: function's arguments.
-        :param kwargs: function's key word arguments.
-        :return: schedule id.
-        """
-        return await self.kicker().schedule_by_time(
-            source,
-            time,
-            *args,
-            **kwargs,
-        )
+        schedules = getattr(self.broker, "schedules", None)
+        if schedules is None:
+            raise TypeError("Schedules need a SynTasks app as the broker.")
+        return await schedules.create(self.task_name, **options)
 
     def kicker(self) -> AsyncKicker[_FuncParams, _ReturnType]:
         """

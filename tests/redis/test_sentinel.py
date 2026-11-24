@@ -11,8 +11,7 @@ from syntasks.redis import (
     Redis,
     SentinelConnectionPool,
 )
-
-from .conftest import RedisServer, _free_port, _wait_for_port
+from tests.conftest import RedisServer, _free_port, _wait_for_port
 
 
 @pytest.fixture(scope="module")

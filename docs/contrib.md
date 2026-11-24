@@ -1,5 +1,5 @@
 ---
-order: 5
+order: 30
 ---
 
 # Contribution guide
@@ -12,7 +12,7 @@ We have several rules for contributors:
 If you struggle with something or feel frustrated, you either create an issue, create a [discussions](https://github.com/synlor/syntasks/discussions)
 page or publish a draft PR and ask your question in the description.
 
-We have lots of tests in CI. But since CI runs from first-time contributors need to be approved, you better test locally. It just takes less time to prepare PR for merging.
+Run the tests locally before opening a PR (see below).
 
 ## Setting up environment
 
@@ -36,7 +36,7 @@ pre-commit run -a
 
 ## Testing
 
-You can run `pytest` without any parameters and it will do the thing.
+You can run `pytest` without any parameters. Tests that need Redis start a throwaway `redis-server` (it must be on `PATH`), or use `SYNTASKS_TEST_REDIS_URL` pointing at a disposable server; your own Redis is never touched.
 
 ```bash
 pytest

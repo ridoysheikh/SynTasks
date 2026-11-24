@@ -22,7 +22,6 @@ repos:
         args: [
             '--exclude-files', 'pnpm-lock.yaml',
             '--exclude-files', 'docs/README.md',
-            '--exclude-lines', 'amqp://guest:guest@localhost:5672',
         ]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit

@@ -42,8 +42,14 @@ syntasks = "syntasks.__main__:main"
 syntasks = "syntasks.instrumentation:SynTasksInstrumentor"
 
 [project.entry-points.syntasks_cli]
-worker = "syntasks.cli.worker.cmd:WorkerCMD"
-scheduler = "syntasks.cli.scheduler.cmd:SchedulerCMD"
+worker = "syntasks.cli.worker:WorkerCMD"
+config = "syntasks.cli.config_cmd:ConfigCMD"
+queues = "syntasks.cli.ops:QueuesCMD"
+schedules = "syntasks.cli.ops:SchedulesCMD"
+channels = "syntasks.cli.ops:ChannelsCMD"
+nodes = "syntasks.cli.ops:NodesCMD"
+tasks = "syntasks.cli.ops:TasksCMD"
+logs = "syntasks.cli.ops:LogsCMD"
 
 [project.optional-dependencies]
 cbor = ["cbor2>=5"]
@@ -92,12 +98,7 @@ build-backend = "hatchling.build"
 [tool.coverage.run]
 omit = [
   "syntasks/__main__.py",
-  "syntasks/abc/cmd.py",
-  "syntasks/cli/scheduler/args.py",
-  "syntasks/cli/scheduler/cmd.py",
-  "syntasks/cli/utils.py",
-  "syntasks/cli/worker/args.py",
-  "syntasks/cli/worker/cmd.py"
+  "syntasks/abc/cmd.py"
 ]
 
 [tool.hatch.version]
@@ -185,6 +186,17 @@ lint.mccabe = { max-complexity = 10 }
   "PLR0915",  # Too many statements
   "PYI034",  # __enter__ return type
 ]
+"syntasks/cli/*" = [
+  "T201",  # CLI commands print
+  "C901",  # One branch per sub-command
+  "PLR0912",
+  "PLR0915",
+]
+"syntasks/**/scripts.py" = [
+  "E501",  # Lua source
+  "UP031",
+]
+"syntasks/cluster/semaphore.py" = ["UP031"]  # Lua source with % substitution
 "tests/**/*" = [
   "S101",  # Use of assert detected
   "S105",  # Hardcoded password (test credentials)
@@ -208,14 +220,20 @@ lint.mccabe = { max-complexity = 10 }
 ]
 
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = ["syntasks.dependencies.Depends", "syntasks.SynTasksDepends"]
+extend-immutable-calls = [
+  "syntasks.dependencies.Depends",
+  "syntasks.SynTasksDepends",
+  "syntasks.Depends",
+  "syntasks.config.schema.setting",
+  "setting",
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "pep257"
 ignore-decorators = ["typing.overload"]
 
 [tool.ruff.lint.pylint]
-allow-magic-value-types = ["int", "str", "float"]
+allow-magic-value-types = ["int", "str", "float", "bytes"]
 
 [tool.tox]
 requires = ["tox>=4"]

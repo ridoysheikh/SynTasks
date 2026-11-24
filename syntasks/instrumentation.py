@@ -39,8 +39,6 @@ from collections.abc import Callable, Collection
 from typing import Any
 from weakref import WeakSet as _WeakSet
 
-from syntasks.cli.worker.args import WorkerArgs
-
 try:
     import opentelemetry  # noqa: F401
 except ImportError as exc:
@@ -57,7 +55,7 @@ from opentelemetry.metrics import MeterProvider
 from opentelemetry.trace import TracerProvider
 from wrapt import wrap_function_wrapper
 
-import syntasks.cli.worker.run
+import syntasks.worker.supervisor
 from syntasks import AsyncBroker
 from syntasks.middlewares.opentelemetry_middleware import OpenTelemetryMiddleware
 
@@ -68,10 +66,7 @@ class SynTasksInstrumentor(BaseInstrumentor):
     """OpenTelemetry instrumentor for SynTasks."""
 
     _instrumented_brokers: _WeakSet[AsyncBroker] = _WeakSet()
-    _original_start_listen: Callable[
-        [WorkerArgs],
-        None,
-    ] = syntasks.cli.worker.run.start_listen
+    _original_child_main: Callable[..., None] = syntasks.worker.supervisor.child_main
 
     def __init__(self) -> None:
         super().__init__()
@@ -85,7 +80,7 @@ class SynTasksInstrumentor(BaseInstrumentor):
     ) -> None:
         """Instrument broker."""
         if not hasattr(broker, "_is_instrumented_by_opentelemetry"):
-            broker._is_instrumented_by_opentelemetry = False  # type: ignore[attr-defined] # noqa: SLF001
+            broker._is_instrumented_by_opentelemetry = False  # type: ignore[attr-defined]  # noqa: SLF001
 
         if not getattr(broker, "is_instrumented_by_opentelemetry", False):
             broker.middlewares.insert(
@@ -95,7 +90,7 @@ class SynTasksInstrumentor(BaseInstrumentor):
                     meter_provider=meter_provider,
                 ),
             )
-            broker._is_instrumented_by_opentelemetry = True  # type: ignore[attr-defined] # noqa: SLF001
+            broker._is_instrumented_by_opentelemetry = True  # type: ignore[attr-defined]  # noqa: SLF001
             if broker not in self._instrumented_brokers:
                 self._instrumented_brokers.add(broker)
         else:
@@ -110,7 +105,7 @@ class SynTasksInstrumentor(BaseInstrumentor):
             for middleware in broker.middlewares
             if not isinstance(middleware, OpenTelemetryMiddleware)
         ]
-        broker._is_instrumented_by_opentelemetry = False  # type: ignore[attr-defined] # noqa: SLF001
+        broker._is_instrumented_by_opentelemetry = False  # type: ignore[attr-defined]  # noqa: SLF001
         self._instrumented_brokers.discard(broker)
 
     def instrumentation_dependencies(self) -> Collection[str]:
@@ -118,9 +113,9 @@ class SynTasksInstrumentor(BaseInstrumentor):
         return ("syntasks >= 0.0.0",)
 
     @classmethod
-    def _start_listen_with_initialize(cls, args: WorkerArgs) -> None:
+    def _child_main_with_initialize(cls, *args: Any, **kwargs: Any) -> None:
         initialize()
-        cls._original_start_listen(args)
+        cls._original_child_main(*args, **kwargs)
 
     def _instrument(self, **kwargs: Any) -> None:
         def broker_init(
@@ -138,7 +133,7 @@ class SynTasksInstrumentor(BaseInstrumentor):
             "AsyncBroker.__init__",
             broker_init,
         )
-        syntasks.cli.worker.run.start_listen = self._start_listen_with_initialize
+        syntasks.worker.supervisor.child_main = self._child_main_with_initialize  # type: ignore[assignment]
 
     def _uninstrument(self, **kwargs: Any) -> None:
         instances_to_uninstrument = list(self._instrumented_brokers)
@@ -146,4 +141,4 @@ class SynTasksInstrumentor(BaseInstrumentor):
             self.uninstrument_broker(broker)
         self._instrumented_brokers.clear()
         unwrap(AsyncBroker, "__init__")
-        syntasks.cli.worker.run.start_listen = self._original_start_listen  # type: ignore[assignment]
+        syntasks.worker.supervisor.child_main = self._original_child_main  # type: ignore[assignment]

@@ -1,6 +1,6 @@
 from collections.abc import Coroutine
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from logging import getLogger
 from types import CoroutineType
 from typing import (
@@ -9,22 +9,18 @@ from typing import (
     Generic,
     ParamSpec,
     TypeVar,
-    Union,
     overload,
 )
 
 from syntasks.abc.middleware import SynTasksMiddleware
-from syntasks.exceptions import SendTaskError
+from syntasks.exceptions import DuplicateTaskError, SendTaskError
 from syntasks.labels import prepare_label
 from syntasks.message import SynTasksMessage
-from syntasks.scheduler.created_schedule import CreatedSchedule
-from syntasks.scheduler.scheduled_task import CronSpec, ScheduledTask
 from syntasks.task import AsyncSynTasksTask
 from syntasks.utils import maybe_awaitable
 
 if TYPE_CHECKING:  # pragma: no cover
     from syntasks.abc.broker import AsyncBroker
-    from syntasks.abc.schedule_source import ScheduleSource
 
 _T = TypeVar("_T")
 _FuncParams = ParamSpec("_FuncParams")
@@ -47,7 +43,6 @@ class AsyncKicker(Generic[_FuncParams, _ReturnType]):
         self.broker = broker
         self.labels = labels
         self.custom_task_id: str | None = None
-        self.custom_schedule_id: str | None = None
         self.return_type = return_type
 
     def with_labels(
@@ -61,6 +56,60 @@ class AsyncKicker(Generic[_FuncParams, _ReturnType]):
         :return: kicker with new labels.
         """
         self.labels.update(labels)
+        return self
+
+    def with_queue(self, queue: str) -> "AsyncKicker[_FuncParams, _ReturnType]":
+        """
+        Send this call to another queue.
+
+        :param queue: queue name.
+        :return: kicker.
+        """
+        self.labels["queue"] = queue
+        return self
+
+    def with_priority(self, priority: int) -> "AsyncKicker[_FuncParams, _ReturnType]":
+        """
+        Set the priority of this call (0 = highest).
+
+        :param priority: priority level.
+        :return: kicker.
+        """
+        self.labels["priority"] = priority
+        return self
+
+    def with_delay(
+        self,
+        delay: float | timedelta,
+    ) -> "AsyncKicker[_FuncParams, _ReturnType]":
+        """
+        Run this call after a delay.
+
+        :param delay: seconds or a timedelta.
+        :return: kicker.
+        """
+        seconds = (
+            delay.total_seconds() if isinstance(delay, timedelta) else float(delay)
+        )
+        self.labels["delay"] = seconds
+        return self
+
+    def with_timeout(
+        self,
+        timeout: float | timedelta,
+    ) -> "AsyncKicker[_FuncParams, _ReturnType]":
+        """
+        Override the time limit of this call.
+
+        :param timeout: seconds or a timedelta.
+        :return: kicker.
+        """
+        seconds = (
+            timeout.total_seconds()
+            if isinstance(timeout, timedelta)
+            else float(timeout)
+        )
+        self.labels["timeout"] = seconds
         return self
 
     def with_task_id(
@@ -77,19 +126,6 @@ class AsyncKicker(Generic[_FuncParams, _ReturnType]):
         :return: kicker with custom task id.
         """
         self.custom_task_id = task_id
-        return self
-
-    def with_schedule_id(
-        self,
-        schedule_id: str,
-    ) -> "AsyncKicker[_FuncParams, _ReturnType]":
-        """
-        Set schedule_id for current execution.
-
-        :param schedule_id: custom schedule id.
-        :return: kicker with custom schedule id.
-        """
-        self.custom_schedule_id = schedule_id
         return self
 
     def with_broker(
@@ -162,6 +198,15 @@ class AsyncKicker(Generic[_FuncParams, _ReturnType]):
                 message = await maybe_awaitable(middleware.pre_send(message))
         try:
             await self.broker.kick(self.broker.formatter.dumps(message))
+        except DuplicateTaskError as duplicate:
+            # unique_for: hand back the task that is already queued.
+            return AsyncSynTasksTask(
+                task_id=duplicate.task_id,
+                result_backend=self.broker.result_backend,
+                return_type=self.return_type,  # type: ignore
+            )
+        except SendTaskError:
+            raise
         except Exception as exc:
             raise SendTaskError from exc
 
@@ -174,110 +219,6 @@ class AsyncKicker(Generic[_FuncParams, _ReturnType]):
             result_backend=self.broker.result_backend,
             return_type=self.return_type,  # type: ignore # (pyright issue)
         )
-
-    async def schedule_by_cron(
-        self,
-        source: "ScheduleSource",
-        cron: Union[str, "CronSpec"],
-        *args: _FuncParams.args,
-        **kwargs: _FuncParams.kwargs,
-    ) -> CreatedSchedule[_ReturnType]:
-        """
-        Function to schedule task with cron.
-
-        :param source: schedule source.
-        :param cron: cron expression.
-        :param args: function's args.
-        :param kwargs: function's kwargs.
-
-        :return: schedule id.
-        """
-        schedule_id = self.custom_schedule_id
-        if schedule_id is None:
-            schedule_id = self.broker.id_generator()
-        message = self._prepare_message(*args, **kwargs)
-        cron_offset = None
-        if isinstance(cron, CronSpec):
-            cron_str = cron.to_cron()
-            cron_offset = cron.offset
-        else:
-            cron_str = cron
-        scheduled = ScheduledTask(
-            schedule_id=schedule_id,
-            task_name=message.task_name,
-            labels=message.labels,
-            args=message.args,
-            kwargs=message.kwargs,
-            task_id=self.custom_task_id,
-            cron=cron_str,
-            cron_offset=cron_offset,
-        )
-        await source.add_schedule(scheduled)
-        return CreatedSchedule(self, source, scheduled)
-
-    async def schedule_by_interval(
-        self,
-        source: "ScheduleSource",
-        interval: int | timedelta,
-        *args: _FuncParams.args,
-        **kwargs: _FuncParams.kwargs,
-    ) -> CreatedSchedule[_ReturnType]:
-        """
-        Function to schedule task using an interval.
-
-        :param source: schedule source.
-        :param interval: interval in seconds or timedelta instance.
-        :param args: function's args.
-        :param kwargs: function's kwargs.
-
-        :return: schedule id.
-        """
-        schedule_id = self.custom_schedule_id
-        if schedule_id is None:
-            schedule_id = self.broker.id_generator()
-        message = self._prepare_message(*args, **kwargs)
-        scheduled = ScheduledTask(
-            schedule_id=schedule_id,
-            task_name=message.task_name,
-            labels=message.labels,
-            args=message.args,
-            kwargs=message.kwargs,
-            task_id=self.custom_task_id,
-            interval=interval,
-        )
-        await source.add_schedule(scheduled)
-        return CreatedSchedule(self, source, scheduled)
-
-    async def schedule_by_time(
-        self,
-        source: "ScheduleSource",
-        time: datetime,
-        *args: _FuncParams.args,
-        **kwargs: _FuncParams.kwargs,
-    ) -> CreatedSchedule[_ReturnType]:
-        """
-        Function to schedule task to run at specific time.
-
-        :param source: schedule source.
-        :param time: time to run task at.
-        :param args: function's args.
-        :param kwargs: function's kwargs.
-        """
-        schedule_id = self.custom_schedule_id
-        if schedule_id is None:
-            schedule_id = self.broker.id_generator()
-        message = self._prepare_message(*args, **kwargs)
-        scheduled = ScheduledTask(
-            schedule_id=schedule_id,
-            task_name=message.task_name,
-            labels=message.labels,
-            args=message.args,
-            kwargs=message.kwargs,
-            task_id=self.custom_task_id,
-            time=time,
-        )
-        await source.add_schedule(scheduled)
-        return CreatedSchedule(self, source, scheduled)
 
     @classmethod
     def _prepare_arg(cls, arg: Any) -> Any:

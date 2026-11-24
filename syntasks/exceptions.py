@@ -96,12 +96,6 @@ class TaskRejectedError(SynTasksError):
     __template__ = "Task was rejected"
 
 
-class ScheduledTaskCancelledError(SynTasksError):
-    """Scheduled task was cancelled and not sent to the queue."""
-
-    __template__ = "Cannot send scheduled task to the queue."
-
-
 class TaskBrokerMismatchError(TaskRejectedError):
     """Task has a different broker than the one it was registered to."""
 
@@ -114,3 +108,50 @@ class ResultIsMissingError(ResultGetError):
 
     __template__ = "There is no result for task {task_id}"
     task_id: str
+
+
+class QueueFullError(SendTaskError):
+    """The queue reached its ``max_length``."""
+
+    __template__ = "Queue {queue!r} is full ({length} messages)."
+    queue: str
+    length: int
+
+
+class DuplicateTaskError(SendTaskError):
+    """An identical task was kicked within its ``unique_for`` window."""
+
+    __template__ = "Task is a duplicate of {task_id}."
+    task_id: str
+
+
+class TaskTimeoutError(SynTasksError):
+    """A task run exceeded its time limit."""
+
+    __template__ = "Task {task_name} exceeded its time limit of {timeout}s."
+    task_name: str
+    timeout: float
+
+
+class TaskMemoryError(SynTasksError):
+    """An isolated task run exceeded its memory limit."""
+
+    __template__ = "Task {task_name} exceeded its memory limit of {limit} bytes."
+    task_name: str
+    limit: int
+
+
+class TaskCancelledError(SynTasksError):
+    """A task run was cancelled on request."""
+
+    __template__ = "Task {task_id} was cancelled."
+    task_id: str
+
+
+class ResultTooLargeError(SynTasksError):
+    """A task's result is bigger than ``max_result``."""
+
+    __template__ = "Result of {task_id} is {size} bytes; the limit is {limit}."
+    task_id: str
+    size: int
+    limit: int

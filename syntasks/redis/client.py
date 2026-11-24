@@ -1,6 +1,7 @@
 """High-level async Redis client."""
 
 import asyncio
+import builtins
 import contextlib
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
@@ -529,6 +530,143 @@ class Redis:
     ) -> Any:
         """Run a Lua script."""
         return await self.execute("EVAL", script, len(keys), *keys, *args)
+
+    async def evalsha(
+        self,
+        sha: str,
+        keys: Sequence[EncodableT] = (),
+        args: Sequence[EncodableT] = (),
+    ) -> Any:
+        """Run a Lua script loaded with :meth:`script_load`."""
+        return await self.execute("EVALSHA", sha, len(keys), *keys, *args)
+
+    async def script_load(self, script: str) -> str:
+        """Load a Lua script into the script cache; returns its SHA1."""
+        sha = await self.execute("SCRIPT", "LOAD", script)
+        return sha.decode() if isinstance(sha, bytes) else str(sha)
+
+    async def time(self) -> float:
+        """Server time as Unix seconds (with microseconds)."""
+        seconds, micros = await self.execute("TIME")
+        return int(seconds) + int(micros) / 1_000_000
+
+    # -- generic helpers used by the cluster layer ----------------------------
+
+    async def blpop(
+        self,
+        keys: EncodableT | Sequence[EncodableT],
+        timeout: float = 0,
+    ) -> tuple[bytes, bytes] | None:
+        """
+        Pop from the head of the first non-empty list, waiting if needed.
+
+        :param keys: one key or several keys.
+        :param timeout: seconds to wait; 0 waits forever.
+        :return: ``(key, value)`` or None on timeout.
+        """
+        key_list: list[EncodableT] = (
+            list(keys)
+            if isinstance(keys, Sequence) and not isinstance(keys, (str, bytes))
+            else [keys]
+        )
+        reply = await self.execute(
+            "BLPOP",
+            *key_list,
+            timeout,
+            timeout=None if timeout == 0 else timeout + _BLOCKING_GRACE,
+        )
+        return None if reply is None else (reply[0], reply[1])
+
+    async def xread(
+        self,
+        streams: dict[Any, Any],
+        *,
+        count: int | None = None,
+        block: int | None = None,
+    ) -> list[tuple[bytes, list[tuple[bytes, dict[bytes, bytes]]]]]:
+        """
+        Read entries from one or more streams (no consumer group).
+
+        :param streams: stream key -> last seen id (``$`` for new only).
+        :param count: max entries per stream.
+        :param block: milliseconds to wait; None doesn't block.
+        :return: ``[(stream, [(entry_id, fields), ...]), ...]``.
+        """
+        args: list[EncodableT] = ["XREAD"]
+        if count is not None:
+            args += ["COUNT", count]
+        if block is not None:
+            args += ["BLOCK", block]
+        args.append("STREAMS")
+        args += list(streams.keys())
+        args += list(streams.values())
+        timeout: float | None = -1
+        if block is not None:
+            timeout = None if block == 0 else block / 1000 + _BLOCKING_GRACE
+        reply = await self.execute(*args, timeout=timeout)
+        if reply is None:
+            return []
+        return [
+            (
+                stream,
+                [
+                    (entry_id, _pairs_to_dict(fields) if fields else {})
+                    for entry_id, fields in entries
+                ],
+            )
+            for stream, entries in reply
+        ]
+
+    async def xrange(
+        self,
+        key: EncodableT,
+        start: EncodableT = "-",
+        end: EncodableT = "+",
+        count: int | None = None,
+    ) -> list[tuple[bytes, dict[bytes, bytes]]]:
+        """Entries of a stream between two ids, oldest first."""
+        args: list[EncodableT] = ["XRANGE", key, start, end]
+        if count is not None:
+            args += ["COUNT", count]
+        reply = await self.execute(*args)
+        return [(entry_id, _pairs_to_dict(fields)) for entry_id, fields in reply]
+
+    async def xrevrange(
+        self,
+        key: EncodableT,
+        end: EncodableT = "+",
+        start: EncodableT = "-",
+        count: int | None = None,
+    ) -> list[tuple[bytes, dict[bytes, bytes]]]:
+        """Entries of a stream between two ids, newest first."""
+        args: list[EncodableT] = ["XREVRANGE", key, end, start]
+        if count is not None:
+            args += ["COUNT", count]
+        reply = await self.execute(*args)
+        return [(entry_id, _pairs_to_dict(fields)) for entry_id, fields in reply]
+
+    async def xdel(self, key: EncodableT, *ids: EncodableT) -> int:
+        """Delete stream entries."""
+        return await self.execute("XDEL", key, *ids)
+
+    async def zrange_withscores(
+        self,
+        key: EncodableT,
+        start: int,
+        stop: int,
+    ) -> list[tuple[bytes, float]]:
+        """Members with scores, by rank."""
+        reply = await self.execute("ZRANGE", key, start, stop, "WITHSCORES")
+        return [(reply[i], float(reply[i + 1])) for i in range(0, len(reply), 2)]
+
+    async def zscore(self, key: EncodableT, member: EncodableT) -> float | None:
+        """Score of a member, or None."""
+        reply = await self.execute("ZSCORE", key, member)
+        return None if reply is None else float(reply)
+
+    async def smembers(self, key: EncodableT) -> builtins.set[bytes]:
+        """All members of a set."""
+        return builtins.set(await self.execute("SMEMBERS", key))
 
 
 class Pipeline:

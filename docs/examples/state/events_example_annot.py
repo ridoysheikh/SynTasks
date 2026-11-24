@@ -1,68 +1,53 @@
 import asyncio
 from typing import Annotated
 
-from redis.asyncio import ConnectionPool, Redis  # type: ignore
-from taskiq_aio_pika import AioPikaBroker
-from taskiq_redis import RedisAsyncResultBackend
+from syntasks import (
+    Context,
+    Redis,
+    SynTasks,
+    SynTasksDepends,
+    SynTasksEvents,
+    SynTasksState,
+)
 
-from syntasks import Context, SynTasksDepends, SynTasksEvents, SynTasksState
-
-# To run this example, please install:
-# * syntasks
-# * taskiq-redis
-# * taskiq-aio-pika
-
-broker = AioPikaBroker(
-    "amqp://localhost",
-).with_result_backend(RedisAsyncResultBackend("redis://localhost"))
+app = SynTasks()
 
 
-@broker.on_event(SynTasksEvents.WORKER_STARTUP)
+@app.on_event(SynTasksEvents.WORKER_STARTUP)
 async def startup(state: SynTasksState) -> None:
-    # Here we store connection pool on startup for later use.
-    state.redis = ConnectionPool.from_url("redis://localhost/1")
+    # Open a client once per worker process and keep it in the state.
+    state.cache = Redis.from_url("redis://localhost/1")
 
 
-@broker.on_event(SynTasksEvents.WORKER_SHUTDOWN)
+@app.on_event(SynTasksEvents.WORKER_SHUTDOWN)
 async def shutdown(state: SynTasksState) -> None:
-    # Here we close our pool on shutdown event.
-    await state.redis.disconnect()
+    await state.cache.close()
 
 
-@broker.task
+@app.task
 async def get_val(
     key: str,
     context: Annotated[Context, SynTasksDepends()],
 ) -> str | None:
-    # Now we can use our pool.
-    redis = Redis(connection_pool=context.state.redis, decode_responses=True)
-    return await redis.get(key)
+    value = await context.state.cache.get(key)
+    return None if value is None else value.decode()
 
 
-@broker.task
+@app.task
 async def set_val(
     key: str,
     value: str,
     context: Annotated[Context, SynTasksDepends()],
 ) -> None:
-    # Now we can use our pool to set value.
-    await Redis(connection_pool=context.state.redis).set(key, value)
+    await context.state.cache.set(key, value)
 
 
 async def main() -> None:
-    await broker.startup()
-
-    set_task = await set_val.kiq("key", "value")
-    set_result = await set_task.wait_result(with_logs=True)
-    if set_result.is_err:
-        print(set_result.log)
-        raise ValueError("Cannot set value in redis. See logs.")
-
-    get_task = await get_val.kiq("key")
-    get_res = await get_task.wait_result()
-    print(f"Got redis value: {get_res.return_value}")
-
-    await broker.shutdown()
+    await app.startup()
+    await (await set_val.kiq("key", "value")).wait_result(timeout=10)
+    result = await (await get_val.kiq("key")).wait_result(timeout=10)
+    print(f"Got value: {result.return_value}")
+    await app.shutdown()
 
 
 if __name__ == "__main__":

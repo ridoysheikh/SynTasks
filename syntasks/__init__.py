@@ -1,29 +1,41 @@
-"""Distributed task manager."""
+"""SynTasks: distributed async task queue with built-in Redis, by Synlor."""
 
 from importlib.metadata import version
+
+__version__ = version("syntasks")
 
 from syntasks.abc.broker import AsyncBroker, AsyncSynTasksDecoratedTask
 from syntasks.abc.formatter import SynTasksFormatter
 from syntasks.abc.middleware import SynTasksMiddleware
 from syntasks.abc.result_backend import AsyncResultBackend
-from syntasks.abc.schedule_source import ScheduleSource
 from syntasks.acks import AckableMessage, AcknowledgeType
+from syntasks.app import SynTasks
 from syntasks.brokers.inmemory_broker import InMemoryBroker
 from syntasks.brokers.multi_broker import MultiBroker
 from syntasks.brokers.shared_broker import async_shared_broker
+from syntasks.channels import Channel, ChannelMessage
+from syntasks.config import Config, ConfigError, load_config
 from syntasks.context import Context
+from syntasks.dependencies import Depends
 from syntasks.dependencies import Depends as SynTasksDepends
 from syntasks.events import SynTasksEvents
 from syntasks.exceptions import (
+    DuplicateTaskError,
     NoResultError,
+    QueueFullError,
     ResultGetError,
     ResultIsReadyError,
+    ResultTooLargeError,
     SecurityError,
     SendTaskError,
     SynTasksError,
     SynTasksResultTimeoutError,
+    TaskCancelledError,
+    TaskMemoryError,
+    TaskTimeoutError,
 )
 from syntasks.funcs import gather
+from syntasks.limits import PayloadInvalidError, PayloadTooLargeError
 from syntasks.message import BrokerMessage, SynTasksMessage
 from syntasks.middlewares import (
     PrometheusMiddleware,
@@ -35,16 +47,20 @@ from syntasks.redis import (
     RedisListBroker,
     RedisPubSubBroker,
     RedisResultBackend,
-    RedisScheduleSource,
     RedisStreamBroker,
 )
 from syntasks.result import SynTasksResult
-from syntasks.scheduler.scheduled_task import ScheduledTask
-from syntasks.scheduler.scheduler import SynTasksScheduler
+from syntasks.scheduler import (
+    ScheduleError,
+    ScheduleInfo,
+    after,
+    at,
+    cron,
+    every,
+)
 from syntasks.state import SynTasksState
 from syntasks.task import AsyncSynTasksTask
-
-__version__ = version("syntasks")
+from syntasks.worker.deadline import Deadline
 
 __all__ = [
     "AckableMessage",
@@ -54,25 +70,36 @@ __all__ = [
     "AsyncSynTasksDecoratedTask",
     "AsyncSynTasksTask",
     "BrokerMessage",
+    "Channel",
+    "ChannelMessage",
+    "Config",
+    "ConfigError",
     "Context",
+    "Deadline",
+    "Depends",
+    "DuplicateTaskError",
     "InMemoryBroker",
     "MultiBroker",
     "NoResultError",
+    "PayloadInvalidError",
+    "PayloadTooLargeError",
     "PrometheusMiddleware",
+    "QueueFullError",
     "Redis",
     "RedisListBroker",
     "RedisPubSubBroker",
     "RedisResultBackend",
-    "RedisScheduleSource",
     "RedisStreamBroker",
     "ResultGetError",
     "ResultIsReadyError",
-    "ScheduleSource",
-    "ScheduledTask",
+    "ResultTooLargeError",
+    "ScheduleError",
+    "ScheduleInfo",
     "SecurityError",
     "SendTaskError",
     "SimpleRetryMiddleware",
     "SmartRetryMiddleware",
+    "SynTasks",
     "SynTasksDepends",
     "SynTasksError",
     "SynTasksEvents",
@@ -81,9 +108,16 @@ __all__ = [
     "SynTasksMiddleware",
     "SynTasksResult",
     "SynTasksResultTimeoutError",
-    "SynTasksScheduler",
     "SynTasksState",
+    "TaskCancelledError",
+    "TaskMemoryError",
+    "TaskTimeoutError",
     "__version__",
+    "after",
     "async_shared_broker",
+    "at",
+    "cron",
+    "every",
     "gather",
+    "load_config",
 ]

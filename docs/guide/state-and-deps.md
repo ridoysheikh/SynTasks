@@ -1,5 +1,5 @@
 ---
-order: 7
+order: 10
 ---
 
 # State and Dependencies
@@ -7,7 +7,7 @@ order: 7
 ## State
 
 The `SynTasksState` is a global variable where you can keep the variables you want to use later.
-For example, you want to open a database connection pool at a broker's startup.
+For example, you want to open a database connection pool when a worker starts.
 
 This can be achieved by adding event handlers.
 
@@ -18,8 +18,8 @@ You can use one of these events:
 - `WORKER_SHUTDOWN`
 - `CLIENT_SHUTDOWN`
 
-Worker events are called when you start listening to the broker messages using syntasks.
-Client events are called when you call the `startup` method of your broker from your code.
+Worker events are called when a worker process starts or stops.
+Client events are called when you call `app.startup()` / `app.shutdown()` in your own program.
 
 This is an example of code using event handlers:
 
@@ -37,7 +37,7 @@ This is an example of code using event handlers:
 
 ::: tip Cool tip!
 
-If you want to add handlers programmatically, you can use the `broker.add_event_handler` function.
+If you want to add handlers programmatically, you can use the `app.add_event_handler` function.
 
 :::
 
@@ -50,7 +50,7 @@ Using context directly is nice, but this way you won't get code-completion.
 
 That's why we suggest you try SynTasksDependencies. The implementation is very similar to FastApi's dependencies. You can use classes, functions, and generators as dependencies.
 
-We use the [taskiq-dependencies](https://pypi.org/project/taskiq-dependencies/) package to provide autocompletion.
+Dependency injection is built in (`syntasks.dependencies`, derived from [taskiq-dependencies](https://pypi.org/project/taskiq-dependencies/)) and gives full autocompletion.
 You can easily integrate it in your own project.
 
 ### How dependencies are useful
@@ -62,7 +62,7 @@ Dependencies can be annotated with type hints and therefore provide better auto-
 Let's assume that you've stored a Redis connection pool in the state as in the example above.
 
 ```python
-@broker.on_event(SynTasksEvents.WORKER_STARTUP)
+@app.on_event(SynTasksEvents.WORKER_STARTUP)
 async def startup(state: SynTasksState) -> None:
     # Here we store connection pool on startup for later use.
     state.redis = ConnectionPool.from_url("redis://localhost/1")
@@ -78,7 +78,7 @@ You can access this variable by using the current execution context directly, li
 ```python
 from typing import Annotated
 
-@broker.task
+@app.task
 async def my_task(context: Annotated[Context, SynTasksDepends()]) -> None:
     async with Redis(connection_pool=context.state.redis, decode_responses=True) as redis:
         await redis.set('key', 'value')
@@ -87,7 +87,7 @@ async def my_task(context: Annotated[Context, SynTasksDepends()]) -> None:
 @tab default values
 
 ```python
-@broker.task
+@app.task
 async def my_task(context: Context = SynTasksDepends()) -> None:
     async with Redis(connection_pool=context.state.redis, decode_responses=True) as redis:
         await redis.set('key', 'value')
@@ -108,7 +108,7 @@ from typing import Annotated
 def redis_dep(context: Annotated[Context, SynTasksDepends()]) -> Redis:
     return Redis(connection_pool=context.state.redis, decode_responses=True)
 
-@broker.task
+@app.task
 async def my_task(redis: Annotated[Redis, SynTasksDepends(redis_dep)]) -> None:
     await redis.set('key', 'value')
 
@@ -121,7 +121,7 @@ async def my_task(redis: Annotated[Redis, SynTasksDepends(redis_dep)]) -> None:
 def redis_dep(context: Context = SynTasksDepends()) -> Redis:
     return Redis(connection_pool=context.state.redis, decode_responses=True)
 
-@broker.task
+@app.task
 async def my_task(redis: Redis = SynTasksDepends(redis_dep)) -> None:
     await redis.set('key', 'value')
 
@@ -311,13 +311,6 @@ async def get_transaction(
 :::
 
 
-If you don't want to propagate exceptions in dependencies, you can add `--no-propagate-errors` option to `worker` command.
-
-```bash
-syntasks worker my_file:broker --no-propagate-errors
-```
-
-In this case, no exception will ever be propagated to any dependency.
 
 ## Progress tracking
 
@@ -325,8 +318,8 @@ Sometimes a task runs for a long time and you want to report how far it has prog
 (e.g. a web handler polling for status) can display it.
 
 SynTasks provides a `ProgressTracker` dependency for this. It's not a method on `Context`, it's a dependency, just like
-anything else built with `taskiq-dependencies`. It grabs the current `task_id` from the context for you and stores
-progress using your broker's result backend.
+any other dependency. It grabs the current `task_id` from the context for you and stores
+progress in the app's result backend; with a SynTasks app, `task.watch_progress()` streams updates as they happen.
 
 ::: tabs
 
@@ -378,8 +371,6 @@ By default syntasks has only two dependencies:
 ### Adding first-level dependencies
 
 You can expand the default list of available dependencies for your application.
-SynTasks has the ability to add new first-level dependencies using brokers.
-
-The AsyncBroker interface has a function called `add_dependency_context` and you can add
+Apps (and every broker) have a function called `add_dependency_context` and you can add
 more default dependencies to the syntasks. This may be useful for libraries if you want to
 add new dependencies to users.

@@ -14,6 +14,7 @@ from typing import (
 )
 
 import syntasks.exceptions
+from syntasks.error import Error
 
 DecodedType = TypeVar("DecodedType")
 EncodedType = TypeVar("EncodedType")
@@ -26,11 +27,9 @@ SEEN_EXCEPTIONS_CACHE: set[int] = set()
 class Coder(Protocol, Generic[DecodedType, EncodedType]):  # pragma: no cover
     """Serializer protocol to check methods `loads` and `dumps`."""
 
-    def loads(self, s: EncodedType) -> DecodedType:  # noqa: D102
-        ...
+    def loads(self, s: EncodedType) -> DecodedType: ...  # noqa: D102
 
-    def dumps(self, obj: DecodedType) -> EncodedType:  # noqa: D102
-        ...
+    def dumps(self, obj: DecodedType) -> EncodedType: ...  # noqa: D102
 
 
 def _safe_str(obj: Any) -> str:
@@ -251,6 +250,7 @@ class ExceptionRepr:
     exc_cause: Union[BaseException, "ExceptionRepr"] | None = None
     exc_context: Union[BaseException, "ExceptionRepr"] | None = None
     exc_suppress_context: bool = False
+    exc_kwargs: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.exc_type, str):
@@ -287,6 +287,7 @@ class ExceptionRepr:
             "exc_cause": _nested(self.exc_cause),
             "exc_context": _nested(self.exc_context),
             "exc_suppress_context": self.exc_suppress_context,
+            "exc_kwargs": self.exc_kwargs,
         }
 
     @classmethod
@@ -316,6 +317,7 @@ class ExceptionRepr:
                 exc_cause=_nested(data.get("exc_cause")),
                 exc_context=_nested(data.get("exc_context")),
                 exc_suppress_context=data.get("exc_suppress_context", False),
+                exc_kwargs=data.get("exc_kwargs"),
             )
         except KeyError as exc:
             raise TypeError(f"Exception representation is missing {exc}.") from exc
@@ -346,6 +348,12 @@ def _prepare_exception(
         else:
             context = None
 
+        exc_kwargs = None
+        if isinstance(exc, Error):
+            exc_kwargs = {
+                name: ensure_serializable((getattr(exc, name, None),), coder)[0]
+                for name in exc._collect_annotations()  # noqa: SLF001
+            }
         return ExceptionRepr(
             exc_type=getattr(exctype, "__qualname__", exctype.__name__),
             exc_message=ensure_serializable(getattr(exc, "args", []), coder),
@@ -353,6 +361,7 @@ def _prepare_exception(
             exc_cause=cause,
             exc_context=context,
             exc_suppress_context=exc.__suppress_context__,
+            exc_kwargs=exc_kwargs,
         )
 
     finally:
@@ -375,7 +384,7 @@ def prepare_exception(
     return _prepare_exception(exc, coder)  # type: ignore
 
 
-def exception_to_python(  # noqa: C901
+def exception_to_python(  # noqa: C901, PLR0912
     exc: BaseException | ExceptionRepr | Mapping[str, Any] | None,
 ) -> BaseException | None:
     """Convert serialized exception to Python exception.
@@ -437,8 +446,12 @@ def exception_to_python(  # noqa: C901
     # XXX: Without verifying `cls` is actually an exception class,
     #      an attacker could execute arbitrary python code.
     #      cls could be anything, even eval().
+    exception: BaseException
     try:
-        exception = cls(*exc_msg)
+        if exc.exc_kwargs is not None and issubclass(cls, Error):
+            exception = cls(**exc.exc_kwargs)
+        else:
+            exception = cls(*exc_msg)
     except Exception:
         exception = Exception(f"{cls}({exc_msg})")
 

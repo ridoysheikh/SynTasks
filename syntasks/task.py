@@ -99,12 +99,31 @@ class AsyncSynTasksTask(Generic[_ReturnType]):
             become ready in provided period of time.
         :return: task's return value.
         """
+        waiter = getattr(self.result_backend, "wait", None)
+        if waiter is not None:
+            # Push-based: block on the result's done stream instead of polling.
+            if not await waiter(self.task_id, None if timeout <= 0 else timeout):
+                raise SynTasksResultTimeoutError(timeout=timeout)
+            return await self.get_result(with_logs=with_logs)
         start_time = time()
         while not await self.is_ready():
             if 0 < timeout < time() - start_time:
                 raise SynTasksResultTimeoutError(timeout=timeout)
             await asyncio.sleep(check_interval)
         return await self.get_result(with_logs=with_logs)
+
+    def watch_progress(self, timeout: float | None = None) -> Any:
+        """
+        Progress updates as they happen (SynTasks apps), until the task ends.
+
+        :param timeout: stop after this many seconds.
+        :raises TypeError: if the result backend can't push progress.
+        :return: async iterator of progress updates.
+        """
+        watcher = getattr(self.result_backend, "watch_progress", None)
+        if watcher is None:
+            raise TypeError("This result backend can't stream progress.")
+        return watcher(self.task_id, timeout=timeout)
 
     async def get_progress(self) -> "TaskProgress[Any] | None":
         """

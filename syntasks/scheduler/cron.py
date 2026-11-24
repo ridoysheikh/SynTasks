@@ -1,17 +1,19 @@
 """
-Minimal cron expression matcher (standard library only).
+Cron expressions (standard library only).
 
-Supports the classic five fields: ``minute hour day-of-month month
-day-of-week``. Each field accepts ``*``, numbers, ranges (``1-5``),
-steps (``*/15``, ``1-30/2``, ``5/10``), lists (``1,15,30``), month names
-(``jan``-``dec``) and weekday names (``sun``-``sat``; ``0`` and ``7`` both
-mean Sunday). The macros ``@yearly``, ``@annually``, ``@monthly``,
+Five fields ``minute hour day-of-month month day-of-week``, or six with a
+leading ``second`` field. Each field accepts ``*``, numbers, ranges
+(``1-5``), steps (``*/15``, ``1-30/2``, ``5/10``), lists (``1,15,30``), month
+names (``jan``-``dec``) and weekday names (``sun``-``sat``; ``0`` and ``7``
+both mean Sunday). The macros ``@yearly``, ``@annually``, ``@monthly``,
 ``@weekly``, ``@daily``, ``@midnight`` and ``@hourly`` are expanded.
 
 As in Vixie cron, when both day-of-month and day-of-week are restricted,
 a date matches if *either* of them matches.
 """
 
+import datetime as dt
+from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -59,6 +61,7 @@ class _Field:
     names: dict[str, int]
 
 
+_SECONDS = _Field(0, 59, {})
 _FIELDS = (
     _Field(0, 59, {}),  # minute
     _Field(0, 23, {}),  # hour
@@ -119,6 +122,8 @@ class CronExpression:
     weekdays: frozenset[int]
     days_restricted: bool
     weekdays_restricted: bool
+    seconds: frozenset[int] = frozenset({0})
+    has_seconds: bool = False
 
     @classmethod
     def parse(cls, expression: str) -> "CronExpression":
@@ -131,9 +136,15 @@ class CronExpression:
         """
         text = _MACROS.get(expression.strip().lower(), expression)
         parts = text.split()
+        seconds = frozenset({0})
+        has_seconds = len(parts) == len(_FIELDS) + 1
+        if has_seconds:
+            seconds = _parse_field(parts[0], _SECONDS)
+            parts = parts[1:]
         if len(parts) != len(_FIELDS):
             raise ValueError(
-                f"Cron expression must have 5 fields, got {len(parts)}: {expression!r}",
+                "Cron expression must have 5 fields (or 6 with seconds), "
+                f"got {len(text.split())}: {expression!r}",
             )
         minutes, hours, days, months, weekdays = (
             _parse_field(part, spec) for part, spec in zip(parts, _FIELDS, strict=True)
@@ -149,15 +160,22 @@ class CronExpression:
             weekdays=weekdays,
             days_restricted=not parts[2].startswith("*"),
             weekdays_restricted=not parts[4].startswith("*"),
+            seconds=seconds,
+            has_seconds=has_seconds,
         )
 
     def matches(self, moment: datetime) -> bool:
         """
-        Check whether a moment matches this expression (to the minute).
+        Check whether a moment matches this expression.
+
+        Five-field expressions compare to the minute; six-field ones also
+        compare the second.
 
         :param moment: moment to check.
         :return: True if it matches.
         """
+        if self.has_seconds and moment.second not in self.seconds:
+            return False
         if (
             moment.minute not in self.minutes
             or moment.hour not in self.hours
@@ -169,6 +187,103 @@ class CronExpression:
         if self.days_restricted and self.weekdays_restricted:
             return day_ok or weekday_ok
         return day_ok and weekday_ok
+
+    def _day_ok(self, day: dt.date) -> bool:
+        day_ok = day.day in self.days
+        weekday_ok = day.isoweekday() % 7 in self.weekdays
+        if self.days_restricted and self.weekdays_restricted:
+            return day_ok or weekday_ok
+        return day_ok and weekday_ok
+
+    def next_local(self, after: datetime) -> datetime | None:  # noqa: C901, PLR0912
+        """
+        First naive local time strictly after ``after`` that matches.
+
+        :param after: naive local time.
+        :return: next match, or None if there is none within 8 years.
+        """
+        step = dt.timedelta(seconds=1) if self.has_seconds else dt.timedelta(minutes=1)
+        moment = after.replace(microsecond=0) + step
+        if not self.has_seconds:
+            moment = moment.replace(second=0)
+        seconds = sorted(self.seconds)
+        minutes = sorted(self.minutes)
+        hours = sorted(self.hours)
+        limit = after.year + 8
+        while moment.year <= limit:
+            if moment.month not in self.months:
+                year, month = (
+                    (moment.year + 1, 1)
+                    if moment.month == 12
+                    else (moment.year, moment.month + 1)
+                )
+                moment = datetime(year, month, 1)
+                continue
+            if not self._day_ok(moment.date()):
+                moment = datetime.combine(
+                    moment.date() + dt.timedelta(days=1),
+                    dt.time(),
+                )
+                continue
+            if moment.hour not in self.hours:
+                index = bisect_right(hours, moment.hour)
+                if index == len(hours):
+                    moment = datetime.combine(
+                        moment.date() + dt.timedelta(days=1),
+                        dt.time(),
+                    )
+                else:
+                    moment = moment.replace(hour=hours[index], minute=0, second=0)
+                continue
+            if moment.minute not in self.minutes:
+                index = bisect_right(minutes, moment.minute)
+                if index == len(minutes):
+                    moment = moment.replace(minute=0, second=0) + dt.timedelta(hours=1)
+                else:
+                    moment = moment.replace(minute=minutes[index], second=0)
+                continue
+            if moment.second not in self.seconds:
+                index = bisect_right(seconds, moment.second)
+                if index == len(seconds):
+                    moment = moment.replace(second=0) + dt.timedelta(minutes=1)
+                else:
+                    moment = moment.replace(second=seconds[index])
+                continue
+            return moment
+        return None
+
+    def next_after(
+        self,
+        after: datetime,
+        tz: dt.tzinfo | None = None,
+    ) -> datetime | None:
+        """
+        First time strictly after ``after`` that matches, in time zone ``tz``.
+
+        Local times skipped by a DST jump don't fire; times repeated when
+        clocks go back fire once (the first occurrence).
+
+        :param after: aware datetime.
+        :param tz: time zone the expression is written in (default UTC).
+        :return: aware datetime of the next fire, or None.
+        """
+        zone = tz or dt.UTC
+        local = after.astimezone(zone).replace(tzinfo=None)
+        for _ in range(1000):
+            candidate = self.next_local(local)
+            if candidate is None:
+                return None
+            aware = candidate.replace(tzinfo=zone, fold=0)
+            if (
+                aware.astimezone(dt.UTC).astimezone(zone).replace(tzinfo=None)
+                != candidate
+            ):
+                local = candidate  # does not exist (DST gap)
+                continue
+            if aware > after:
+                return aware
+            local = candidate
+        return None
 
 
 @lru_cache(maxsize=4096)

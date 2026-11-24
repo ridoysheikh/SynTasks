@@ -1,11 +1,9 @@
-import datetime
 import random
 from collections.abc import Iterable
 from collections.abc import Set as AbstractSet
 from logging import getLogger
 from typing import Any
 
-from syntasks import ScheduleSource
 from syntasks.abc.middleware import SynTasksMiddleware
 from syntasks.exceptions import NoResultError
 from syntasks.kicker import AsyncKicker
@@ -36,7 +34,6 @@ class SmartRetryMiddleware(SynTasksMiddleware):
         use_jitter: bool = False,
         use_delay_exponent: bool = False,
         max_delay_exponent: float = 60,
-        schedule_source: ScheduleSource | None = None,
         types_of_exceptions: Iterable[type[BaseException]] | None = None,
     ) -> None:
         """
@@ -49,8 +46,6 @@ class SmartRetryMiddleware(SynTasksMiddleware):
         :param use_jitter: Add random jitter to retry delay.
         :param use_delay_exponent: Apply exponential backoff to delay.
         :param max_delay_exponent: Maximum allowed delay when using backoff.
-        :param schedule_source: Schedule source to use for scheduling.
-            If None, the default broker will be used.
         :param types_of_exceptions: Types of exceptions to retry from.
         """
         super().__init__()
@@ -61,13 +56,7 @@ class SmartRetryMiddleware(SynTasksMiddleware):
         self.use_jitter = use_jitter
         self.use_delay_exponent = use_delay_exponent
         self.max_delay_exponent = max_delay_exponent
-        self.schedule_source = schedule_source
         self.types_of_exceptions = types_of_exceptions
-
-        if not isinstance(schedule_source, (ScheduleSource, type(None))):
-            raise TypeError(
-                "schedule_source must be an instance of ScheduleSource or None",
-            )
 
     def _get_types_of_exceptions(
         self,
@@ -132,21 +121,8 @@ class SmartRetryMiddleware(SynTasksMiddleware):
         message: SynTasksMessage,
         delay: float,
     ) -> None:
-        """Execute the task with a delay."""
-        if self.schedule_source is None:
-            await kicker.with_labels(delay=delay).kiq(*message.args, **message.kwargs)
-        else:
-            target_time = datetime.datetime.now(
-                datetime.UTC,
-            ) + datetime.timedelta(
-                seconds=delay,
-            )
-            await kicker.schedule_by_time(
-                self.schedule_source,
-                target_time,
-                *message.args,
-                **message.kwargs,
-            )
+        """Send the task again after ``delay`` (the broker's ``delay`` label)."""
+        await kicker.with_labels(delay=delay).kiq(*message.args, **message.kwargs)
 
     async def on_error(
         self,

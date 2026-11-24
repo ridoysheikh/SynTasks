@@ -1,11 +1,12 @@
 ---
-title: Task manager for asyncio
+title: Distributed async tasks on Redis
 home: true
 heroImage: logo.svg
-heroAlt: logo
-heroText: SynTasks python
+heroAlt: SynTasks logo
+heroText: SynTasks
+tagline: Distributed async task queue for Python, with Redis built in.
 actions:
-  - text: Get Started
+  - text: Get started
     link: /guide/getting-started.html
     type: primary
   - text: Introduction
@@ -13,33 +14,37 @@ actions:
     type: secondary
 highlights:
     - features:
-        - title: Built on proven foundations
-          details: SynTasks started from the battle-tested taskiq codebase and is evolving from there.
-        - title: Fully asynchronous
-          details: SynTasks can run both sync and async functions. You don't have to worry about it.
-        - title: Easily extensible
-          details: SynTasks has a lot of replaceable components. It's super easy to implement
-            your own broker or middleware.
-        - title: Strongly typed
-          details: SynTasks provides correct autocompletion for most of its functionality.
+        - title: Zero dependencies
+          details: The library uses only the Python standard library. Redis client, brokers, results, schedules and channels are built in.
+        - title: Made for many machines
+          details: Every machine runs the same worker. Cluster-wide state lives in Redis; roles that need one owner move by lease when a machine dies.
+        - title: Scheduling in the library
+          details: Second-level schedules declared next to tasks or created at runtime, stored in Redis, fired exactly once across the cluster.
+        - title: Limits that hold
+          details: Concurrency per machine, per task across the cluster and per key; rate limits; soft and hard timeouts with grace; memory limits.
+        - title: Channels
+          details: Broadcast streams with replay, and long-running handlers kept alive once per channel, for websocket rooms and stateful loops.
+        - title: One config file
+          details: syntasks.toml for every setting, with environment overrides, profiles and a generated reference.
 
 copyright: false
-footer: MIT Licensed | Copyright© 2026-present <a href="https://synlor.com">Synlor</a> | Based on <a href="https://github.com/taskiq-python/taskiq">taskiq</a> by Pavel Kirilin
+footer: MIT Licensed | Copyright © 2026-present <a href="https://synlor.com">Synlor</a> | Derived from <a href="https://github.com/taskiq-python/taskiq">taskiq</a> by Pavel Kirilin
 ---
 
-## What is syntasks in a nutshell
+```python
+from syntasks import SynTasks, every
 
-Consider syntasks as an asyncio celery implementation. It uses almost the same patterns, but it's more modern
-and flexible.
-
-It's not a drop-in replacement for any other task manager. It has a different ecosystem of libraries and a different set of features.
-Also, it doesn't work for synchronous projects. You won't be able to send tasks synchronously.
+app = SynTasks()  # reads syntasks.toml
 
 
-## Installation
+@app.task(timeout="30s", retries=3)
+async def charge(customer_id: str, cents: int) -> None: ...
 
-You can install syntasks with pip or your favorite dependency manager:
 
-```bash:no-line-numbers
-pip install syntasks
+@app.task(schedule=every("10s"))
+async def sync_rates() -> None: ...
+```
+
+```bash
+syntasks worker
 ```

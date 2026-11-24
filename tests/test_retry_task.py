@@ -5,9 +5,7 @@ from syntasks import (
     InMemoryBroker,
     SmartRetryMiddleware,
     SynTasksDepends,
-    SynTasksScheduler,
 )
-from syntasks.schedule_sources import LabelScheduleSource
 
 
 @pytest.mark.parametrize(
@@ -21,7 +19,6 @@ async def test_save_task_id_for_retry(retry_count: int) -> None:
             default_delay=0.1,
         ),
     )
-    scheduler = SynTasksScheduler(broker, [LabelScheduleSource(broker)])
 
     check_interval = 0.5
 
@@ -33,7 +30,6 @@ async def test_save_task_id_for_retry(retry_count: int) -> None:
         return retry
 
     await broker.startup()
-    await scheduler.startup()
 
     task_with_retry = await exc_task.kiq(retry_count)
     task_with_retry_result = await task_with_retry.wait_result(
