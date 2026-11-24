@@ -114,8 +114,8 @@ class BatchProgress:
 
     @property
     def finished(self) -> bool:
-        """Whether every member is done (and no more will be added)."""
-        return self.state == "cancelled" or (self.sealed and self.pending == 0)
+        """Whether every member is accounted for (and no more will be added)."""
+        return (self.sealed or self.state == "cancelled") and self.pending == 0
 
 
 _FIRE = """
@@ -175,8 +175,9 @@ local function batch_fire(hash)
   local done, failed, cancelled = tonumber(data[2] or '0'), tonumber(data[3] or '0'),
     tonumber(data[4] or '0')
   local finished = done + failed + cancelled
+  -- Fires once every member is accounted for: done, failed, or dropped as
+  -- cancelled when a worker reached it.
   if data[5] ~= '1' and data[6] ~= 'cancelled' then return {} end
-  if data[6] == 'cancelled' then finished = total end
   local then_task = fire(hash, finished, tostring(total))
   if then_task then
     return {then_task, tostring(total), tostring(done), tostring(failed),

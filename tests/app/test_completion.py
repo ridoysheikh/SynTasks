@@ -260,3 +260,31 @@ async def test_batch_map_resumes_and_then(app_factory: AppFactory) -> None:
         10,
         10,
     )
+
+
+async def test_batch_then_after_cancel_counts_every_member(
+    app_factory: AppFactory,
+) -> None:
+    app = app_factory()
+    summaries: list[BatchOutcome] = []
+
+    @app.task(max_tasks_per_node=1)
+    async def slow(n: int) -> None:
+        await asyncio.sleep(0.05)
+
+    @app.task
+    async def report(outcome: BatchOutcome) -> None:
+        summaries.append(outcome)
+
+    batch = await app.batch("cancel-then")
+    await batch.map(slow, range(30), chunk=10)
+    await batch.then(report)
+    async with running(app):
+        await asyncio.sleep(0.3)
+        await batch.cancel()
+        await wait_until(lambda: summaries, timeout=15)
+        await asyncio.sleep(0.3)
+    assert len(summaries) == 1
+    outcome = summaries[0]
+    assert outcome.done + outcome.cancelled == 30
+    assert outcome.cancelled > 0

@@ -364,7 +364,7 @@ async def test_process_memory_limit(app_factory: AppFactory) -> None:
     )
     async with running(app):
         result = await (await hog.kiq(400)).wait_result(timeout=30)
-    assert isinstance(result.error, (TaskMemoryError, MemoryError))
+    assert isinstance(result.error, TaskMemoryError)
 
 
 async def test_pause_resume(app_factory: AppFactory) -> None:
