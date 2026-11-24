@@ -193,6 +193,29 @@ Every timing also takes `id`, `args`, `kwargs` and the policies below.
 
 Missed fires are caught up whenever any worker is back, not only at start.
 
+**Many workers and one schedule**
+
+- **Each fire runs once** in the whole cluster, however many workers run: one
+  node claims it atomically. You don't need `max_tasks=1` to stop duplicates.
+- **A run still going at the next fire** is handled by `overlap` (default
+  `"skip"`: the late fire is dropped), not by `max_tasks`. If you don't want an
+  extra cap, set `max_tasks=None`.
+- **A crash can mean a second run**: another worker takes over the message. Make
+  the work safe to repeat (a "done today" flag, a provider idempotency key, or
+  `unique_for`).
+- **One run uses one worker.** For a big job, make the schedule a small fan-out
+  and let the pool do the work, limiting the per-item task:
+
+```python
+@app.schedule(every("1h"), timeout="1m", retries=0, max_tasks=None)
+async def check_all() -> None:
+    for sub_id in await load_active_subscription_ids():
+        await check_one.kiq(sub_id)              # spread over every worker
+
+@app.task(timeout="30s", retries=3, max_tasks=20, rate="50/s")   # protects the API
+async def check_one(sub_id: str) -> None: ...
+```
+
 **Runtime schedules**: let your users create copies.
 
 ```python
