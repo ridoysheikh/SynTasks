@@ -27,6 +27,7 @@ from syntasks.config.schema import QueueConfig
 from syntasks.decor import AsyncSynTasksDecoratedTask, build_decorated_task
 from syntasks.exceptions import SynTasksError
 from syntasks.options import OptionLayer, parse_layer
+from syntasks.scheduler.recurrence import Recurrence, ScheduleDecl
 
 if TYPE_CHECKING:  # pragma: no cover
     from syntasks.app import SynTasks
@@ -77,6 +78,68 @@ def split_options(
         else:
             task_options[name] = value
     return task_options, other
+
+
+# Keyword arguments of @schedule that are schedule policies, not task options.
+SCHEDULE_OPTIONS = frozenset(
+    {
+        "start_at",
+        "end_at",
+        "jitter",
+        "misfire",
+        "misfire_grace",
+        "max_catchup",
+        "overlap",
+        "max_instances",
+        "max_runs",
+        "pause_after_failures",
+        "paused",
+    },
+)
+
+
+def _schedule_decls(
+    owner: str,
+    timing: Any,
+    schedule_id: str | None,
+    args: Any,
+    kwargs: Any,
+    policies: dict[str, Any],
+) -> list[ScheduleDecl]:
+    items = list(timing) if isinstance(timing, (list, tuple)) else [timing]
+    items = [item for item in items if item is not None]
+    if not items:
+        raise ConfigError(
+            detail=f"{owner}: @schedule needs a timing: every(...), cron(...), "
+            "calendar(...) or at(...).",
+        )
+    if schedule_id is not None and len(items) > 1:
+        raise ConfigError(
+            detail=f"{owner}: with several timings, give each its own id "
+            "(every(..., id=...)).",
+        )
+    decls = []
+    for item in items:
+        decl = ScheduleDecl(recurrence=item) if isinstance(item, Recurrence) else item
+        if not isinstance(decl, ScheduleDecl):
+            raise ConfigError(
+                detail=f"{owner}: a timing must come from every(), cron(), "
+                f"calendar() or at(), got {item!r}.",
+            )
+        if decl.after_ms is not None:
+            raise ConfigError(
+                detail=f"{owner}: after() is for schedules created at runtime.",
+            )
+        decls.append(
+            ScheduleDecl(
+                recurrence=decl.recurrence,
+                id=decl.id or schedule_id,
+                args=decl.args or list(args or ()),
+                kwargs=decl.kwargs or dict(kwargs or {}),
+                options={**policies, **decl.options},
+            ),
+        )
+    return decls
 
 
 def _resolve_path(path: str) -> "Module":
@@ -139,25 +202,73 @@ class Declarations:
         :return: decorated task, or a decorator.
         """
         hint = task_name if isinstance(task_name, str) else None
-        # Phase-1 bridge: replaced by @app.schedule in phase 2.
-        schedule = options.pop("schedule", None)
 
         def wrap(func: Callable[..., Any]) -> AsyncSynTasksDecoratedTask[Any, Any]:
-            decorated = build_decorated_task(
-                self._broker_for_tasks(),
-                func,
-                hint,
-                dict(labels or {}),
-            )
-            layer = parse_layer(f"task {decorated.task_name}", options)
-            if schedule is not None:
-                decorated.pending_schedule = schedule  # type: ignore[attr-defined]
-            self._declare_task(decorated, layer)
-            return decorated
+            return self._make_task(func, hint, labels, options, [])
 
         if callable(task_name):
             return wrap(task_name)
         return wrap
+
+    def schedule(
+        self,
+        timing: Any = None,
+        /,
+        *,
+        task_name: str | None = None,
+        labels: dict[str, Any] | None = None,
+        id: str | None = None,
+        args: Any = None,
+        kwargs: Any = None,
+        **options: Any,
+    ) -> Callable[[Callable[..., Any]], AsyncSynTasksDecoratedTask[Any, Any]]:
+        """
+        Turn a function into a task that runs on a schedule.
+
+        The schedule is stored in Redis and reconciled on every worker start;
+        each fire runs once across the cluster. The function is still a task
+        that can be sent by hand.
+
+        :param timing: :func:`~syntasks.every`, :func:`~syntasks.cron`,
+            :func:`~syntasks.calendar` or :func:`~syntasks.at`, or a list.
+        :param task_name: custom task name (default ``module:function``).
+        :param labels: labels sent with every message.
+        :param id: schedule id (one timing only; default: the task name).
+        :param args: task arguments of every fire.
+        :param kwargs: task keyword arguments of every fire.
+        :param options: schedule policies (``misfire``, ``misfire_grace``,
+            ``overlap``, ``max_instances``, ``jitter``, ``start_at``,
+            ``end_at``, ``max_runs``, ``pause_after_failures``, ``paused``)
+            and task options (``timeout``, ``retries``, ``max_tasks``, ...).
+        :raises ConfigError: without a timing, or with invalid values.
+        :return: decorator.
+        """
+        policies = {k: options.pop(k) for k in list(options) if k in SCHEDULE_OPTIONS}
+        decls = _schedule_decls(self.owner, timing, id, args, kwargs, policies)
+
+        def wrap(func: Callable[..., Any]) -> AsyncSynTasksDecoratedTask[Any, Any]:
+            return self._make_task(func, task_name, labels, options, decls)
+
+        return wrap
+
+    def _make_task(
+        self,
+        func: Callable[..., Any],
+        task_name: str | None,
+        labels: dict[str, Any] | None,
+        options: dict[str, Any],
+        schedules: list[ScheduleDecl],
+    ) -> AsyncSynTasksDecoratedTask[Any, Any]:
+        decorated = build_decorated_task(
+            self._broker_for_tasks(),
+            func,
+            task_name,
+            dict(labels or {}),
+        )
+        layer = parse_layer(f"task {decorated.task_name}", options)
+        decorated.declared_schedules = schedules
+        self._declare_task(decorated, layer)
+        return decorated
 
     def queue(self, name: str, **options: Any) -> None:
         """

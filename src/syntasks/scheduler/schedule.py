@@ -3,6 +3,7 @@
 import hashlib
 import json
 import random
+import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -90,6 +91,24 @@ class ScheduleSpec:
         if not self.jitter_ms:
             return nominal_ms
         return nominal_ms + random.randint(0, self.jitter_ms)  # noqa: S311
+
+    def next_times(self, count: int, after_ms: int | None = None) -> list[int]:
+        """
+        The next ``count`` fire times (for previews).
+
+        :param count: how many.
+        :param after_ms: start (default now).
+        :return: Unix milliseconds, fewer if the schedule ends.
+        """
+        current = int(time.time() * 1000) if after_ms is None else after_ms
+        out: list[int] = []
+        while len(out) < count:
+            nxt = self.next_after(current)
+            if nxt is None:
+                break
+            out.append(nxt)
+            current = nxt
+        return out
 
     def describe(self) -> str:
         """Human description of when it fires."""

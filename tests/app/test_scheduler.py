@@ -1,10 +1,21 @@
 import asyncio
-from typing import Annotated
+from typing import Annotated, Any
 
 import pytest
 
-from syntasks import Depends, ScheduleInfo, SynTasks, after, at, cron, every
-from syntasks.config import Config, ScheduleConfig
+from syntasks import (
+    Depends,
+    Module,
+    ScheduleInfo,
+    SynTasks,
+    after,
+    at,
+    calendar,
+    cron,
+    every,
+)
+from syntasks.config import Config, ConfigError
+from syntasks.options import MissingLimitError
 from syntasks.scheduler import (
     ScheduleConflictError,
     ScheduleError,
@@ -38,46 +49,48 @@ def test_recurrences() -> None:
 
 
 async def test_misfire_plan(app_factory: AppFactory) -> None:
-    app = app_factory()
-    base = ScheduleSpec(
-        id="s",
-        task="t",
-        recurrences=[Every(1000)],
-        misfire_grace_ms=500,
+    def late_after_half_second(config: Config) -> None:
+        config.scheduler.late_after = 0.5
+
+    app = app_factory(late_after_half_second)
+    plan = app.schedules._plan
+
+    def spec(**options: Any) -> ScheduleSpec:
+        return ScheduleSpec(id="s", task="t", recurrences=[Every(1000)], **options)
+
+    # On time (within late_after): an ordinary fire.
+    assert plan(spec(), 10_000, 10_200) == ([10_000], 0, 11_000)
+    # Missed fires 10s..13s at 13.5s.
+    assert plan(spec(misfire="skip"), 10_000, 13_500) == ([], 4, 14_000)
+    assert plan(spec(misfire="once"), 10_000, 13_500) == ([10_000], 3, 14_000)
+    assert plan(spec(misfire="all", max_catchup=2), 10_000, 13_500) == (
+        [10_000, 11_000],
+        2,
+        14_000,
     )
-    assert app.schedules._plan(base, 10_000, 10_200) == ([10_000], 0, 11_000)
-    skip = ScheduleSpec(
-        id="s",
-        task="t",
-        recurrences=[Every(1000)],
-        misfire="skip",
-        misfire_grace_ms=500,
+    # misfire_grace drops missed fires older than it, whatever the policy.
+    assert plan(spec(misfire="once", misfire_grace_ms=2_000), 10_000, 13_500) == (
+        [12_000],
+        3,
+        14_000,
     )
-    assert app.schedules._plan(skip, 10_000, 13_500) == ([], 4, 14_000)
-    once = ScheduleSpec(
-        id="s",
-        task="t",
-        recurrences=[Every(1000)],
-        misfire="once",
-        misfire_grace_ms=500,
+    assert plan(spec(misfire="all", misfire_grace_ms=2_000), 10_000, 13_500) == (
+        [12_000, 13_000],
+        2,
+        14_000,
     )
-    assert app.schedules._plan(once, 10_000, 13_500) == ([10_000], 3, 14_000)
-    catch = ScheduleSpec(
-        id="s",
-        task="t",
-        recurrences=[Every(1000)],
-        misfire="all",
-        misfire_grace_ms=500,
-        max_catchup=2,
+    assert plan(spec(misfire="once", misfire_grace_ms=100), 10_000, 13_500) == (
+        [],
+        4,
+        14_000,
     )
-    assert app.schedules._plan(catch, 10_000, 13_500) == ([10_000, 11_000], 2, 14_000)
 
 
 async def test_static_schedule_runs_with_info(app_factory: AppFactory) -> None:
     app = app_factory(fast)
     seen: list[ScheduleInfo] = []
 
-    @app.task(schedule=every("200ms", id="tick", kwargs={"label": "x"}))
+    @app.schedule(every("200ms"), id="tick", kwargs={"label": "x"})
     async def tick(label: str, info: ScheduleInfo = Depends()) -> None:
         assert label == "x"
         seen.append(info)
@@ -95,47 +108,150 @@ async def test_static_schedule_runs_with_info(app_factory: AppFactory) -> None:
 
 
 async def test_static_sync_prune_and_revision(app_factory: AppFactory) -> None:
-    def v1(config: Config) -> None:
-        config.app.revision = 2
-        config.schedules["nightly"] = ScheduleConfig(task="m:report", cron="0 2 * * *")
+    def revision(number: int) -> Any:
+        def configure(config: Config) -> None:
+            config.app.revision = number
 
-    app = app_factory(v1)
+        return configure
 
-    @app.task(task_name="m:report", schedule=cron("0 3 * * *", id="early"))
+    app = app_factory(revision(2))
+
     async def report() -> None: ...
 
+    app.schedule(
+        [cron("0 3 * * *", id="early"), cron("0 2 * * *", id="nightly")],
+        task_name="m:report",
+    )(report)
     assert await app.schedules.sync_static() == "synced"
     assert await app.schedules.sync_static() == "same"
     ids = sorted([s.id async for s in app.schedules.list()])
     assert ids == ["early", "nightly"]
     await app.schedules.pause("nightly")
 
-    def v1_changed(config: Config) -> None:
-        config.app.revision = 3
-        config.schedules["nightly"] = ScheduleConfig(
-            task="m:report",
-            cron="0 2 * * *",
-            kwargs={},
-        )
-
-    newer = app_factory(v1_changed)
-    newer.task(task_name="m:report")(report.original_func)
+    newer = app_factory(revision(3))
+    newer.schedule(cron("0 2 * * *", id="nightly", kwargs={}), task_name="m:report")(
+        report,
+    )
     assert await newer.schedules.sync_static() == "synced"
     assert [s.id async for s in newer.schedules.list()] == ["nightly"]  # "early" pruned
-    assert (
-        await newer.schedules.get("nightly")
-    ).state == "paused"  # runtime state kept
+    assert (await newer.schedules.get("nightly")).state == "paused"  # state kept
 
-    def old(config: Config) -> None:
-        config.app.revision = 1
-        config.schedules["legacy"] = ScheduleConfig(task="m:report", every=60)
-
-    stale = app_factory(old)
+    stale = app_factory(revision(1))
+    stale.schedule(every(60, id="legacy"), task_name="m:report")(report)
     assert await stale.schedules.sync_static() == "stale"
     with pytest.raises(ScheduleNotFoundError):
         await stale.schedules.get("legacy")
     with pytest.raises(StaticScheduleError):
         await newer.schedules.delete("nightly")
+
+
+async def test_schedule_decorator_creates_task_and_schedule(
+    app_factory: AppFactory,
+) -> None:
+    app = app_factory(fast)
+
+    @app.schedule(
+        every("1s"), misfire="all", overlap="allow", timeout="5s", max_tasks=1
+    )
+    async def beat() -> int:
+        return 1
+
+    assert app.find_task(beat.task_name) is beat
+    specs = app.schedules.static_specs()
+    spec, source, _ = specs[beat.task_name]  # one timing: the id is the task name
+    assert (source, spec.misfire, spec.overlap) == ("code", "all", "allow")
+    options = app.options_for(beat.task_name)
+    assert (options.timeout, options.max_tasks) == (5, 1)
+
+
+async def test_schedule_list_of_timings(app_factory: AppFactory) -> None:
+    app = app_factory(fast)
+
+    @app.schedule([every("1s"), calendar(weekday="mon", at="09:00")])
+    async def twice() -> None: ...
+
+    assert sorted(app.schedules.static_specs()) == [
+        f"{twice.task_name}:0",
+        f"{twice.task_name}:1",
+    ]
+
+
+async def test_schedule_requires_limits(redis_url: str) -> None:
+    config = Config()
+    config.redis.url = redis_url
+    app = SynTasks(config, search_config=False, retries=0, max_tasks=None)
+    with pytest.raises(MissingLimitError, match="timeout"):
+
+        @app.schedule(every("1s"))
+        async def job() -> None: ...
+
+    await app.redis.close()
+
+
+async def test_schedule_needs_timing(app_factory: AppFactory) -> None:
+    app = app_factory()
+    with pytest.raises(ConfigError, match="timing"):
+
+        @app.schedule()
+        async def job() -> None: ...
+
+
+async def test_task_schedule_kwarg_removed(app_factory: AppFactory) -> None:
+    app = app_factory()
+    with pytest.raises(ConfigError, match="schedule"):
+
+        @app.task(schedule=every("1s"))
+        async def job() -> None: ...
+
+
+async def test_schedule_on_module(app_factory: AppFactory) -> None:
+    app = app_factory(fast)
+    reports = Module("reports", timeout="1m")
+
+    @reports.schedule(calendar(day=1, at="06:00", tz="Asia/Dhaka"))
+    async def monthly() -> None: ...
+
+    app.extends(reports)
+    spec, _, _ = app.schedules.static_specs()[monthly.task_name]
+    assert spec.describe() == "day 1 of the month at 06:00 (Asia/Dhaka)"
+    assert len(spec.next_times(3)) == 3
+    assert app.options_for(monthly.task_name).timeout == 60
+
+
+async def test_missed_fires_once_after_downtime(app_factory: AppFactory) -> None:
+    app = app_factory(fast)
+    runs: list[ScheduleInfo] = []
+
+    @app.schedule(every("1s"), id="beat")
+    async def beat(info: Annotated[ScheduleInfo, Depends()]) -> None:
+        runs.append(info)
+
+    assert await app.schedules.sync_static() == "synced"
+    await asyncio.sleep(3.5)  # no worker: fires are missed
+    async with running(app):
+        await wait_until(lambda: len(runs) >= 1, timeout=10)
+        await asyncio.sleep(0.3)
+    first = runs[0]
+    assert first.late_by >= 2.5  # the oldest missed fire, run once
+    assert sum(1 for info in runs if info.late_by >= 1.5) == 1
+    history = await app.schedules.runs("beat")
+    assert max(entry["late_by"] for entry in history) >= 2.5
+
+
+async def test_one_shot_fires_after_downtime(app_factory: AppFactory) -> None:
+    app = app_factory(fast)
+    done: list[ScheduleInfo] = []
+
+    @app.task
+    async def remind(info: Annotated[ScheduleInfo, Depends()]) -> None:
+        done.append(info)
+
+    await app.schedules.create(remind, after="500ms", id="once")
+    await asyncio.sleep(2.0)  # no worker when it was due
+    async with running(app):
+        await wait_until(lambda: len(done) == 1, timeout=10)
+    assert done[0].late_by >= 1.4
+    assert done[0].scheduled_for == done[0].fire_time
 
 
 async def test_dynamic_crud(app_factory: AppFactory) -> None:
@@ -244,7 +360,7 @@ async def test_two_workers_never_double_fire(app_factory: AppFactory) -> None:
     def build() -> SynTasks:
         app = app_factory(fast)
 
-        @app.task(task_name="beat", schedule=every("100ms", id="beat"))
+        @app.schedule(every("100ms"), task_name="beat", id="beat")
         async def beat(info: ScheduleInfo = Depends()) -> None:
             assert info.fire_time is not None
             fires.append(int(info.fire_time.timestamp() * 1000))
@@ -293,7 +409,7 @@ async def test_overlap_skip(app_factory: AppFactory) -> None:
     peak = 0
     done = 0
 
-    @app.task(schedule=every("100ms", id="slow", overlap="skip"))
+    @app.schedule(every("100ms"), id="slow", overlap="skip")
     async def slow() -> None:
         nonlocal active, peak, done
         active += 1
@@ -348,7 +464,7 @@ async def test_schedule_args_skip_annotated_dependencies(
 ) -> None:
     app = app_factory(fast)
 
-    @app.task(schedule=every("1s", kwargs={"x": 1}, id="annotated"))
+    @app.schedule(every("1s"), kwargs={"x": 1}, id="annotated")
     async def job(x: int, info: Annotated[ScheduleInfo, Depends()]) -> None: ...
 
     app.schedules.validate_declared()

@@ -127,7 +127,6 @@ def config_reference() -> str:
         ("worker", schema.WorkerConfig),
         ("node", schema.NodeConfig),
         ("scheduler", schema.SchedulerConfig),
-        ("schedules.<id>", schema.ScheduleConfig),
         ("channels", schema.ChannelsConfig),
         ("results", schema.ResultsConfig),
         ("logging", schema.LoggingConfig),

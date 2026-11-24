@@ -55,6 +55,8 @@ class AsyncSynTasksDecoratedTask(Generic[_FuncParams, _ReturnType]):
         self.original_func = original_func
         self.labels = labels
         self.return_type = return_type
+        # Schedules declared with @app.schedule (registered with the task).
+        self.declared_schedules: list[Any] = []
 
         # This is a hack to make ProcessPoolExecutor work
         # with decorated functions.

@@ -23,7 +23,7 @@ app = SynTasks(timeout="1m", retries=0, max_tasks=None)
 async def add(a: int, b: int) -> int:
     return a + b
 
-@app.task(schedule=every("200ms", id="tick"))
+@app.schedule(every("200ms"), id="tick")
 async def tick() -> None:
     pass
 """
@@ -68,7 +68,10 @@ def _cli(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-async def test_worker_and_management_commands(tmp_path: Path, redis_url: str) -> None:
+async def test_worker_and_management_commands(  # noqa: PLR0915
+    tmp_path: Path,
+    redis_url: str,
+) -> None:
     project = _project(tmp_path, redis_url)
     show = _cli(project, "config", "show", "--sources")
     assert show.returncode == 0, show.stderr
@@ -108,6 +111,12 @@ async def test_worker_and_management_commands(tmp_path: Path, redis_url: str) ->
         assert "default" in queues.stdout
         schedules = _cli(project, "schedules", "list")
         assert "tick" in schedules.stdout and "every 200ms" in schedules.stdout
+        assert "late" in schedules.stdout.splitlines()[0]
+        preview = _cli(project, "schedules", "preview", "tick", "-n", "3")
+        assert preview.returncode == 0, preview.stderr
+        assert len(preview.stdout.strip().splitlines()) == 3
+        runs = _cli(project, "schedules", "runs", "tick")
+        assert "late" in runs.stdout.splitlines()[0]
         paused = _cli(project, "schedules", "pause", "tick")
         assert paused.returncode == 0, paused.stderr
         assert (await app.schedules.get("tick")).state == "paused"

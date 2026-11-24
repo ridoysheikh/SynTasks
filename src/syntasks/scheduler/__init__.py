@@ -3,14 +3,14 @@ Scheduling inside the library, stored in Redis.
 
 Declare schedules next to tasks::
 
-    from syntasks import SynTasks, every, cron
+    from syntasks import SynTasks, calendar, cron, every
 
     app = SynTasks()
 
-    @app.task(schedule=every("10s"))
+    @app.schedule(every("10s"))
     async def poll() -> None: ...
 
-    @app.task(schedule=cron("0 30 9 * * mon-fri", tz="Europe/London"))
+    @app.schedule(calendar(weekday="mon-fri", at="09:30", tz="Europe/London"))
     async def report() -> None: ...
 
 or create them at runtime::
@@ -36,6 +36,7 @@ from syntasks.scheduler.recurrence import (
     ScheduleDecl,
     after,
     at,
+    calendar,
     cron,
     every,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "StaticScheduleError",
     "after",
     "at",
+    "calendar",
     "cron",
     "every",
 ]

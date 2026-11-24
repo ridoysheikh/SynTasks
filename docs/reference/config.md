@@ -72,7 +72,7 @@ Scope: **node** settings describe one machine; **cluster** settings must be the 
 | `enabled` | bool | `true` | node | Run the dispatcher on this machine's workers. |
 | `shards` | int | `1` | cluster | Dispatcher shards. |
 | `min_interval` | duration | `"1s"` | cluster | Shortest allowed recurrence. |
-| `misfire_grace` | duration | `"30s"` | cluster | A fire later than this counts as missed. |
+| `late_after` | duration | `"30s"` | cluster | A fire dispatched later than this counts as missed, even if no newer fire time has passed; its misfire policy decides what runs. |
 | `max_catchup` | int | `10` | cluster | Missed fires replayed with misfire='all'. |
 | `max_dynamic` | int | `100000` | cluster | Max dynamic schedules. |
 | `max_payload` | size | `16384` | cluster | Max size of schedule arguments. |
@@ -82,27 +82,6 @@ Scope: **node** settings describe one machine; **cluster** settings must be the 
 | `max_sleep` | duration | `"1s"` | node | Longest dispatcher sleep. |
 | `batch` | int | `100` | node | Fires claimed per round. |
 | `history` | int | `20` | cluster | Runs kept per schedule. |
-
-## `[schedules.<id>]`
-
-| Setting | Type | Default | Scope | Description |
-|---|---|---|---|---|
-| `task` | str | - | node | Task name, e.g. 'billing.tasks:report'. |
-| `every` | duration | - | node | Interval. |
-| `cron` | str | - | node | Cron expression (5 or 6 fields). |
-| `at` | str | - | node | One-shot time (ISO 8601). |
-| `tz` | str | - | node | Time zone for cron. |
-| `args` | list[Any] | `[]` | node | Positional arguments (JSON). |
-| `kwargs` | dict[str, Any] | `{}` | node | Keyword arguments (JSON). |
-| `start_at` | str | - | node | Don't fire before (ISO 8601). |
-| `end_at` | str | - | node | Don't fire after (ISO 8601). |
-| `jitter` | duration | - | node | Random delay per fire. |
-| `misfire` | Optional[Literal['skip', 'once', 'all']] | - | node | Missed fires policy. |
-| `overlap` | Optional[Literal['skip', 'allow', 'queue']] | - | node | Overlap policy. |
-| `max_instances` | int | - | node | Runs at once for overlap='queue'. |
-| `timeout` | duration | - | node | Run time limit. |
-| `retries` | int | - | node | Retries per fire. |
-| `paused` | bool | `false` | node | Start paused. |
 
 ## `[channels]`
 

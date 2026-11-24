@@ -192,9 +192,8 @@ class SynTasks(Declarations, AsyncBroker):  # type: ignore[misc]
         self._options_cache[name] = options
         task.broker = self
         self._register_task(name, task)
-        schedule = getattr(task, "pending_schedule", None)
-        if schedule is not None:
-            self.schedules.declare(name, schedule)
+        if task.declared_schedules:
+            self.schedules.declare(name, task.declared_schedules)
 
     def _declare_queue(self, name: str, options: QueueConfig) -> None:
         self.declare_queue(name, options)

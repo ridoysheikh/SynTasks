@@ -11,7 +11,12 @@ from .conftest import AppFactory
 
 @pytest.mark.parametrize(
     ("section", "where"),
-    [("tasks", "@app.task"), ("defaults", "SynTasks("), ("queues", "app.queue")],
+    [
+        ("tasks", "@app.task"),
+        ("defaults", "SynTasks("),
+        ("queues", "app.queue"),
+        ("schedules", "@app.schedule"),
+    ],
 )
 def test_code_sections_rejected(tmp_path: Path, section: str, where: str) -> None:
     path = tmp_path / "syntasks.toml"

@@ -224,6 +224,7 @@ _CODE_SECTIONS = {
     "tasks": "task options are set in code: SynTasks(...), Module(...) or "
     "@app.task(...)",
     "queues": "queues are declared in code: app.queue(name, ...)",
+    "schedules": "schedules are declared in code: @app.schedule(...)",
 }
 
 

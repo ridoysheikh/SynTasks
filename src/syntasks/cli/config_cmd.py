@@ -63,12 +63,6 @@ class ConfigCMD(SynTasksCMD):
             names = set(app.get_all_tasks())
             for name in names:
                 app.options_for(name)
-            for schedule_id, schedule in config.schedules.items():
-                if schedule.task not in names:
-                    warnings.append(
-                        f"[schedules.{schedule_id}] runs unknown task "
-                        f"{schedule.task!r}.",
-                    )
             app.schedules.validate_declared()
             print(f"app: {config.app.name} ({len(names)} tasks)")
         for warning in warnings:

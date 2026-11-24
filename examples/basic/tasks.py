@@ -11,6 +11,6 @@ async def add(a: int, b: int) -> int:
     return a + b
 
 
-@app.task(schedule=every("10s"))
+@app.schedule(every("10s"))
 async def heartbeat() -> None:
     logger.info("still here")

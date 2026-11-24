@@ -10,7 +10,7 @@ Keys (under ``syntasks:{<app>}:sched:``):
 ``ids``                ZSET: id → created time (listing)
 ``dynamic``            SET: ids of dynamic schedules (quota)
 ``by-task:<task>``     SET: ids per task
-``static``             HASH: id → fingerprint of code/config schedules
+``static``             HASH: id → fingerprint of declared schedules
 ``static:meta``        HASH: revision, fingerprint, synced_at, synced_by
 ``runs:<id>``          LIST: recent runs (JSON), newest first
 =====================  ========================================================
@@ -276,7 +276,7 @@ return 1
 """,
 )
 
-# Begin syncing code/config schedules.
+# Begin syncing declared schedules.
 # KEYS: 1 static meta, 2 sync lock
 # ARGV: 2 revision|'', 3 set fingerprint, 4 node
 SYNC_BEGIN = Script(

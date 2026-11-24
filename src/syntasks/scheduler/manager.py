@@ -28,7 +28,6 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Annotated, Any, get_args, get_origin, get_type_hints
 
 from syntasks.codec import ConversionError, convert
-from syntasks.config.schema import ScheduleConfig
 from syntasks.dependencies.dependency import Dependency
 from syntasks.exceptions import SynTasksError
 from syntasks.limits import dumps_bounded
@@ -128,7 +127,11 @@ class ScheduleConflictError(ScheduleError):
 
 
 class StaticScheduleError(ScheduleError):
-    """Code/config schedules can't be updated or deleted through the API."""
+    """Declared (code) schedules can't be updated or deleted through the API."""
+
+
+# Missed fire times looked at once; more are skipped without counting.
+_MAX_MISSED = 100_000
 
 
 def _fire_task_id(schedule_id: str, fire_ms: int) -> str:
@@ -279,7 +282,7 @@ class ScheduleManager:
 
     def declare(self, task_name: str, schedule: Any) -> None:
         """
-        Attach schedules to a task (used by ``@app.task(schedule=...)``).
+        Attach schedules to a task (used by ``@app.schedule(...)``).
 
         :param task_name: task name.
         :param schedule: declaration(s) from :func:`every`, :func:`cron`,
@@ -302,46 +305,12 @@ class ScheduleManager:
                 )
             decls.append(item)
 
-    def _config_spec(
-        self,
-        schedule_id: str,
-        item: ScheduleConfig,
-    ) -> tuple[ScheduleSpec, dict[str, Any]]:
-        recurrences: builtins.list[Recurrence] = []
-        if item.every is not None:
-            recurrences.append(Every(int(item.every * 1000)))
-        if item.cron is not None:
-            recurrences.append(Cron(item.cron, item.tz))
-        if item.at is not None:
-            recurrences.append(At(parse_time_ms(item.at)))
-        if not recurrences:
-            raise ScheduleError(
-                detail=f"[schedules.{schedule_id}] needs every, cron or at.",
-            )
-        options = {
-            "start_at": item.start_at,
-            "end_at": item.end_at,
-            "jitter": item.jitter,
-            "misfire": item.misfire,
-            "overlap": item.overlap,
-            "max_instances": item.max_instances,
-            "timeout": item.timeout,
-            "retries": item.retries,
-            "paused": item.paused,
-        }
-        options = {k: v for k, v in options.items() if v is not None}
-        return self._spec(
-            schedule_id,
-            item.task,
-            recurrences,
-            item.args,
-            item.kwargs,
-            options,
-        )
-
     def static_specs(self) -> dict[str, tuple[ScheduleSpec, str, dict[str, Any]]]:
         """
-        All schedules declared in code and config.
+        All schedules declared in code.
+
+        A schedule's id is the one given, else the task name, or
+        ``<task>:<n>`` when the task has several timings.
 
         :raises ScheduleError: on invalid or duplicate declarations.
         :return: ``id → (spec, source, extra)``.
@@ -349,7 +318,8 @@ class ScheduleManager:
         result: dict[str, tuple[ScheduleSpec, str, dict[str, Any]]] = {}
         for task_name, decls in self._declared.items():
             for index, decl in enumerate(decls):
-                schedule_id = decl.id or f"{task_name}:{index}"
+                default_id = task_name if len(decls) == 1 else f"{task_name}:{index}"
+                schedule_id = decl.id or default_id
                 if schedule_id in result:
                     raise ScheduleError(
                         detail=f"Duplicate schedule id {schedule_id!r}.",
@@ -364,18 +334,13 @@ class ScheduleManager:
                     decl.options,
                 )
                 result[schedule_id] = (spec, "code", extra)
-        for schedule_id, item in self.app.config.schedules.items():
-            if schedule_id in result:
-                raise ScheduleError(detail=f"Duplicate schedule id {schedule_id!r}.")
-            spec, extra = self._config_spec(schedule_id, item)
-            result[schedule_id] = (spec, "config", extra)
         for spec, _, _ in result.values():
             self._check_payload(spec)
             self.check_arguments(spec)
         return result
 
     def validate_declared(self) -> None:
-        """Validate code and config schedules (used by ``syntasks config check``)."""
+        """Validate the declared schedules (used by ``syntasks config check``)."""
         self.static_specs()
 
     async def sync_static(self) -> str:
@@ -716,7 +681,7 @@ class ScheduleManager:
         :param schedule_id: id.
         :param version: expected version (optimistic lock); None to skip.
         :param changes: new values.
-        :raises StaticScheduleError: for code/config schedules.
+        :raises StaticScheduleError: for schedules declared in code.
         :raises ScheduleConflictError: if ``version`` is stale.
         :return: updated schedule.
         """
@@ -826,7 +791,7 @@ class ScheduleManager:
 
         :param schedule_id: id.
         :raises ScheduleNotFoundError: if it doesn't exist.
-        :raises StaticScheduleError: for code/config schedules.
+        :raises StaticScheduleError: for schedules declared in code.
         """
         status = await self._delete(schedule_id)
         if status == 0:
@@ -931,6 +896,7 @@ class ScheduleManager:
         run_number: int,
         *,
         manual: bool = False,
+        sent_ms: int | None = None,
     ) -> SynTasksMessage:
         labels: dict[str, Any] = {
             **spec.labels,
@@ -938,6 +904,8 @@ class ScheduleManager:
             "_fire": fire_ms,
             "_run": run_number,
         }
+        if sent_ms is not None:
+            labels["_sent"] = sent_ms
         if spec.overlap != "allow" and not manual:
             labels["_overlap"] = spec.overlap
             labels["_max_instances"] = spec.max_instances
@@ -965,40 +933,35 @@ class ScheduleManager:
         fire: int,
         now: int,
     ) -> tuple[builtins.list[int], int, int | None]:
-        """Fires to send now, missed fires skipped, and the next nominal time."""
+        """
+        Fires to send now, fires skipped, and the next nominal time.
+
+        A fire is *missed* when a newer fire time has passed too (the cluster
+        was down or behind), or when it is dispatched later than
+        ``scheduler.late_after``. Otherwise it is on time and simply runs.
+        For missed fires the schedule's ``misfire`` policy decides which of
+        the passed fire times run, after dropping those older than its
+        ``misfire_grace``.
+        """
         config = self.app.config.scheduler
-        grace = spec.misfire_grace_ms
-        if grace is None:
-            grace = int(config.misfire_grace * 1000)
-        if now - fire <= grace:
-            return [fire], 0, spec.next_after(fire)
-        if spec.misfire == "skip":
-            missed = 1
-            nxt = spec.next_after(fire)
-            while nxt is not None and nxt <= now and missed < 1_000_000:
-                missed += 1
-                nxt = spec.next_after(nxt)
-            return [], missed, nxt
-        if spec.misfire == "once":
-            nxt = spec.next_after(fire)
-            skipped = 0
-            while nxt is not None and nxt <= now and skipped < 1_000_000:
-                skipped += 1
-                nxt = spec.next_after(nxt)
-            return [fire], skipped, nxt
-        cap = spec.max_catchup or config.max_catchup
-        fires = [fire]
+        missed = [fire]
         nxt = spec.next_after(fire)
-        skipped = 0
-        while nxt is not None and nxt <= now:
-            if len(fires) < cap:
-                fires.append(nxt)
-            else:
-                skipped += 1
-                if skipped > 1_000_000:
-                    break
+        while nxt is not None and nxt <= now and len(missed) < _MAX_MISSED:
+            missed.append(nxt)
             nxt = spec.next_after(nxt)
-        return fires, skipped, nxt
+        if len(missed) == 1 and now - fire <= int(config.late_after * 1000):
+            return [fire], 0, nxt
+        while nxt is not None and nxt <= now:  # beyond the cap: count only
+            nxt = spec.next_after(nxt)
+        grace = spec.misfire_grace_ms
+        usable = [f for f in missed if grace is None or now - f <= grace]
+        if spec.misfire == "skip" or not usable:
+            fires: builtins.list[int] = []
+        elif spec.misfire == "once":
+            fires = usable[:1]
+        else:
+            fires = usable[: spec.max_catchup or config.max_catchup]
+        return fires, len(missed) - len(fires), nxt
 
     async def dispatch(
         self,
@@ -1059,7 +1022,10 @@ class ScheduleManager:
             fires = fires[: max(spec.max_runs - runs, 0)]
             if runs + len(fires) >= spec.max_runs:
                 nominal = None
-        messages = [self._message(spec, f, runs + i + 1) for i, f in enumerate(fires)]
+        messages = [
+            self._message(spec, f, runs + i + 1, sent_ms=now)
+            for i, f in enumerate(fires)
+        ]
         probe_labels = (
             messages[0].labels
             if messages
@@ -1141,9 +1107,17 @@ class ScheduleManager:
             return
         status = "error" if result.is_err else "ok"
         error = "" if result.error is None else repr(result.error)[:1000]
+        fire = message.labels.get("_fire")
+        sent = message.labels.get("_sent")
+        late_by = (
+            max(int(str(sent)) - int(str(fire)), 0) / 1000
+            if fire not in (None, "") and sent not in (None, "")
+            else 0.0
+        )
         entry = json.dumps(
             {
-                "fire": message.labels.get("_fire"),
+                "fire": fire,
+                "late_by": late_by,
                 "task_id": message.task_id,
                 "status": status,
                 "duration": result.execution_time,

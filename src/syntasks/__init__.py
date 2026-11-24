@@ -54,6 +54,7 @@ from syntasks.scheduler import (
     ScheduleInfo,
     after,
     at,
+    calendar,
     cron,
     every,
 )
@@ -117,6 +118,7 @@ __all__ = [
     "after",
     "async_shared_broker",
     "at",
+    "calendar",
     "cron",
     "every",
     "gather",

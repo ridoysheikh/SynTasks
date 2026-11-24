@@ -18,7 +18,6 @@ __all__ = [
     "QueueConfig",
     "RedisConfig",
     "ResultsConfig",
-    "ScheduleConfig",
     "SchedulerConfig",
     "SentinelConfig",
     "TaskConfig",
@@ -325,10 +324,11 @@ class SchedulerConfig:
         doc="Shortest allowed recurrence.",
         scope="cluster",
     )
-    misfire_grace: float = setting(
+    late_after: float = setting(
         30.0,
         unit="duration",
-        doc="A fire later than this counts as missed.",
+        doc="A fire dispatched later than this counts as missed, even if no "
+        "newer fire time has passed; its misfire policy decides what runs.",
         scope="cluster",
     )
     max_catchup: int = setting(
@@ -367,28 +367,6 @@ class SchedulerConfig:
     max_sleep: float = setting(1.0, unit="duration", doc="Longest dispatcher sleep.")
     batch: int = setting(100, doc="Fires claimed per round.")
     history: int = setting(20, doc="Runs kept per schedule.", scope="cluster")
-
-
-@dataclass(kw_only=True)
-class ScheduleConfig:
-    """``[schedules.<id>]``: a static schedule declared in config."""
-
-    task: str = setting(doc="Task name, e.g. 'billing.tasks:report'.")
-    every: float | None = setting(unit="duration", doc="Interval.")
-    cron: str | None = setting(doc="Cron expression (5 or 6 fields).")
-    at: str | None = setting(doc="One-shot time (ISO 8601).")
-    tz: str | None = setting(doc="Time zone for cron.")
-    args: list[Any] = setting(factory=list, doc="Positional arguments (JSON).")
-    kwargs: dict[str, Any] = setting(factory=dict, doc="Keyword arguments (JSON).")
-    start_at: str | None = setting(doc="Don't fire before (ISO 8601).")
-    end_at: str | None = setting(doc="Don't fire after (ISO 8601).")
-    jitter: float | None = setting(unit="duration", doc="Random delay per fire.")
-    misfire: Literal["skip", "once", "all"] | None = setting(doc="Missed fires policy.")
-    overlap: Literal["skip", "allow", "queue"] | None = setting(doc="Overlap policy.")
-    max_instances: int | None = setting(doc="Runs at once for overlap='queue'.")
-    timeout: float | None = setting(unit="duration", doc="Run time limit.")
-    retries: int | None = setting(doc="Retries per fire.")
-    paused: bool = setting(False, doc="Start paused.")
 
 
 @dataclass(kw_only=True)
@@ -474,7 +452,6 @@ class Config:
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     node: NodeConfig = field(default_factory=NodeConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
-    schedules: dict[str, ScheduleConfig] = field(default_factory=dict)
     channels: ChannelsConfig = field(default_factory=ChannelsConfig)
     results: ResultsConfig = field(default_factory=ResultsConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
