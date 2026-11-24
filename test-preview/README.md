@@ -43,17 +43,34 @@ Install the web dependencies once (`fastapi`, `uvicorn`, `websockets`):
 uv sync --all-extras --group preview        # from the repository root
 ```
 
-Then start four things, each in its own terminal, from `test-preview/`.
-Redis listens on 55460, which is what `syntasks.toml` expects:
+Then, from `test-preview/`, one script runs the whole thing (a throwaway
+Redis on port 55460, two workers, one web server) in the background, with a
+log file for each:
+
+```bash
+./dev.sh start             # starts everything and waits until it is up
+./dev.sh logs              # follow all logs together (Ctrl-C stops following only)
+./dev.sh logs worker1      # or one of: redis, worker1, worker2, web
+./dev.sh status            # what is running, and the cluster seen from the web server
+./dev.sh kill worker1      # SIGKILL one worker "machine": watch the other take over
+./dev.sh stop              # stop everything (workers shut down gracefully)
+```
+
+Logs and pids are in `test-preview/.dev/` (git-ignored). `WEB_PORT` and
+`REDIS_PORT` change the ports. If something already listens on the Redis
+port, `dev.sh` uses that Redis and leaves it running on `stop`.
+
+<details>
+<summary>The same by hand, one terminal each</summary>
 
 ```bash
 redis-server --port 55460 --save "" --appendonly no      # or: docker compose up -d --wait
-
 ../.venv/bin/syntasks worker                              # worker1 (one "machine", 2 processes)
 ../.venv/bin/syntasks worker                              # worker2 (another "machine")
-
 ../.venv/bin/uvicorn shop.web:api --port 8001             # the web server
 ```
+
+</details>
 
 Open <http://127.0.0.1:8001/>. The page shows the worker processes grouped
 by machine, and every card is a feature; the cards say what to expect.
@@ -61,7 +78,7 @@ Things worth doing:
 
 - **Spread over the workers.** Send 40 tiny tasks: both machines and all four processes get a share.
 - **Retries.** Send the charge `A-1007`: it fails once, is retried, and the result says it finished on attempt 2 and which machine ran it.
-- **Kill a worker** (`Ctrl-C` worker1, or `kill -9` its supervisor) while the cluster card refreshes. Its processes disappear, the other machine carries on, the `heartbeat` schedule keeps firing, and a channel it hosted moves.
+- **Kill a worker** (`./dev.sh kill worker1`) while the cluster card refreshes. Its processes disappear, the other machine carries on, the `heartbeat` schedule keeps firing, and a channel it hosted moves.
 - **Live channel.** Open the page in two browser tabs, connect `staff:ada` in one and `staff:alan` in the other: one handler serves both. Alan can read but is refused when he posts; `guest:eve` can't connect.
 - **Watchlists.** In two tabs with the same user, subscribe a group of symbols in the first, then use *Restore* in the second: it joins the first tab's groups and gets the last values at once. *Vendor calls* shows the vendor is asked once per symbol, and it stops about two seconds after the last tab leaves.
 - **Posts.** Schedule four posts for one owner: the fourth is refused (`max_per_owner = 3`). A post set 20 s ahead runs on a worker and shows `done / ok`.
@@ -120,6 +137,7 @@ folder the walkthrough prints.
 | `shop/live.py` | `Module("live", ...)`: a channel handler with `authorize`, and the `quote` feed |
 | `shop/__main__.py` | `python -m shop <command>`: one command per feature |
 | `shop/web.py` | the FastAPI web server: sends tasks, reads results and events, schedules posts, relays the live channel and the watchlist sockets |
+| `dev.sh` | start / stop / logs / status / kill for Redis, two workers and the web server |
 | `shop/index.html` | the page it serves at `/`: one card per feature |
 | `walkthrough.py` | runs the story above |
 | `docker-compose.yml` | Redis on port 55460, if you'd rather not install `redis-server` |
