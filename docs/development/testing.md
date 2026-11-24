@@ -53,8 +53,11 @@ reference:
 uv run python -c "from syntasks.config.dump import config_reference; open('docs/reference/config.md', 'w').write(config_reference())"
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint and mypy, the suite on Python
-3.11–3.14, and checks that the wheel installs with no other packages.
+There is no CI service: releases are cut from a developer machine. `scripts/release.sh`
+runs ruff, `ruff format --check`, mypy and the suite (skip with `--skip-tests`)
+before it builds, and you can run the same four commands at any time. The suite
+runs on the Python you have; to cover other versions, run it under each
+(`uv run --python 3.11 pytest -q`).
 
 Before a release, also run `test-preview/walkthrough.py`: it drives every
 feature on two real worker supervisors and kills one of them.
