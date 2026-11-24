@@ -5,6 +5,8 @@ machines, with Redis as the only other moving part. Each page answers one
 question and stays short. Find what you want to do below and follow the link.
 
 > **New here?** Read [Install](getting-started/install.md), then [Quickstart](getting-started/quickstart.md).
+>
+> **Want every option on one page?** [Everything on one page](overview.md): tasks, schedules, channels and feeds, and what two running workers do.
 
 ## Core ideas
 
