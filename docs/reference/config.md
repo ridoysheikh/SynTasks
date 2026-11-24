@@ -4,7 +4,7 @@
 
 Units: durations like `"250ms"`, `"30s"`, `"1h30m"` (or seconds); sizes like `"64KiB"`, `"2GiB"` (or bytes); rates like `"100/s"`.
 
-Scope: **node** settings describe one machine; **cluster** settings must be the same everywhere and are published to Redis on start (see [Cluster](../guide/cluster.md)).
+Scope: **node** settings describe one machine; **cluster** settings must be the same everywhere and are published to Redis on start (see [Cluster](../guides/cluster.md)).
 
 ## `[app]`
 

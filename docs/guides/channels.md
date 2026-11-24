@@ -1,7 +1,3 @@
----
-order: 8
----
-
 # Channels
 
 A channel is a named, ordered message stream in Redis. Any number of

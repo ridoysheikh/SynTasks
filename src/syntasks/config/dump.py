@@ -148,7 +148,7 @@ def config_reference() -> str:
         (
             "Scope: **node** settings describe one machine; **cluster** settings "
             "must be the same everywhere and are published to Redis on start "
-            "(see [Cluster](../guide/cluster.md))."
+            "(see [Cluster](../guides/cluster.md))."
         ),
         "",
     ]

@@ -1,7 +1,3 @@
----
-order: 9
----
-
 # Results and logs
 
 ## Waiting for results

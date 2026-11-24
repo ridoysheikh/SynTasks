@@ -28,15 +28,21 @@ machines.
 > **Status:** early development. APIs may change until the first stable
 > release.
 
-## Installation
+## Install
 
 Requires Python 3.11+ and Redis 6.2+.
 
 ```bash
-pip install git+https://github.com/synlor/syntasks
+pip install syntasks
 ```
 
-## Usage
+Until it's on PyPI, install from a [GitHub release](https://github.com/ridoysheikh/syntasks/releases):
+
+```bash
+pip install "syntasks @ https://github.com/ridoysheikh/syntasks/releases/download/v0.1.0/syntasks-0.1.0-py3-none-any.whl"
+```
+
+## In five minutes
 
 ```python
 # app.py
@@ -78,11 +84,22 @@ result = await task.wait_result(timeout=10)
 print(result.return_value)  # 3
 ```
 
-More: limits, queues, dynamic schedules, channels, groups, log capture and
-the CLI are described in the [docs](docs/guide/README.md). Every setting is
-in the [configuration reference](docs/reference/config.md).
+To see more running at once (several workers, schedules, limits, channels
+and groups), try [`test-preview/`](test-preview/README.md).
 
-### Optional extras
+## Documentation
+
+Short pages, one question each. Start at **[docs/](docs/README.md)**.
+
+| | |
+| --- | --- |
+| [Install](docs/getting-started/install.md) · [Quickstart](docs/getting-started/quickstart.md) | get going |
+| [Tasks](docs/guides/tasks.md) · [Results and logs](docs/guides/results-and-logs.md) · [Dependencies](docs/guides/dependencies.md) | write tasks |
+| [Configuration](docs/guides/configuration.md) · [Queues](docs/guides/queues.md) · [Limits](docs/guides/limits.md) · [Cluster](docs/guides/cluster.md) | run them in production |
+| [Scheduling](docs/guides/scheduling.md) · [Channels](docs/guides/channels.md) | on time, and long-running |
+| [Config](docs/reference/config.md) · [CLI](docs/reference/cli.md) · [Python API](docs/reference/python-api.md) | reference |
+
+## Optional extras
 
 | Extra | Adds |
 |---|---|
@@ -99,15 +116,18 @@ created by Pavel Kirilin and the taskiq contributors. A large part of the
 original codebase comes from taskiq, and its design is the direct inspiration
 for this project. Dependency injection is vendored from
 [taskiq-dependencies](https://github.com/taskiq-python/taskiq-dependencies).
-All are released under the MIT License; see [LICENSE](LICENSE).
+All are released under the MIT License; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-## Local development
+## Development
 
 ```bash
 uv sync --all-extras
-uv run pytest -n auto      # Redis tests start a throwaway redis-server
-uv run pre-commit install  # linting
+uv run pytest -q -n auto   # Redis tests start a throwaway redis-server
 ```
 
-The Redis tests need `redis-server` on `PATH`, or `SYNTASKS_TEST_REDIS_URL`
-pointing at a disposable server. If neither is available, they are skipped.
+See [Testing](docs/development/testing.md) and [Releasing](docs/development/releasing.md).
+
+## License
+
+[MIT](LICENSE)

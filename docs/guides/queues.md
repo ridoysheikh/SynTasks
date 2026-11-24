@@ -1,7 +1,3 @@
----
-order: 5
----
-
 # Queues
 
 Every message goes to a queue: a set of Redis streams read by a consumer

@@ -1,18 +1,7 @@
----
-order: 2
----
+# Quickstart
 
-# Getting started
-
-## Install
-
-SynTasks isn't on PyPI yet; install it from source:
-
-```bash
-pip install git+https://github.com/synlor/syntasks
-```
-
-You also need a Redis server (6.2 or newer).
+From zero to tasks running on workers in five minutes. You need SynTasks
+[installed](install.md) and a Redis server.
 
 ## Write an app
 
@@ -82,8 +71,11 @@ asyncio.run(main())
 `kiq` returns as soon as the message is in Redis. `wait_result` blocks
 until a worker stores the result; it doesn't poll.
 
+To see more running at once (schedules, limits, channels, groups, several
+workers), try [`test-preview/`](../../test-preview/README.md).
+
 ## Next
 
-- [Tasks](tasks.md): options, retries, routing.
-- [Scheduling](scheduling.md): run tasks every N seconds, on cron, once.
-- [Limits](limits.md): concurrency, rate limits, timeouts, memory.
+- [Tasks](../guides/tasks.md): options, retries, routing.
+- [Scheduling](../guides/scheduling.md): run tasks every N seconds, on cron, once.
+- [Limits](../guides/limits.md): concurrency, rate limits, timeouts, memory.

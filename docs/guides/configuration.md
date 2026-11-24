@@ -1,7 +1,3 @@
----
-order: 3
----
-
 # Configuration
 
 All settings live in one TOML file. The [reference](../reference/config.md)

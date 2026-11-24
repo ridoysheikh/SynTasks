@@ -1,7 +1,3 @@
----
-order: 6
----
-
 # Limits
 
 | Limit | Scope | Setting |

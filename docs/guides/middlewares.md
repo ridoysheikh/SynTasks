@@ -1,7 +1,3 @@
----
-order: 14
----
-
 # Middlewares
 
 Middlewares hook into sending and running tasks.

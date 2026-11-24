@@ -1,7 +1,3 @@
----
-order: 7
----
-
 # Scheduling
 
 Schedules live in Redis and are fired by the workers themselves; there is

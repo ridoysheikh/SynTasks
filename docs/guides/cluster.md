@@ -1,7 +1,3 @@
----
-order: 11
----
-
 # Cluster
 
 How SynTasks behaves on 10 to 100 machines.

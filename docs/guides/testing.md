@@ -1,7 +1,3 @@
----
-order: 13
----
-
 # Testing
 
 ## A real worker in the test process

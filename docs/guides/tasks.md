@@ -1,7 +1,3 @@
----
-order: 4
----
-
 # Tasks
 
 ## Declaring
@@ -91,4 +87,4 @@ false` to skip). `max_result` caps their size. See
 
 Tasks can receive dependencies: the message `Context`, the run's
 `Deadline` ([Limits](limits.md)), `ScheduleInfo` ([Scheduling](scheduling.md)),
-`ProgressTracker`, or your own. See [State and dependencies](state-and-deps.md).
+`ProgressTracker`, or your own. See [State and dependencies](dependencies.md).
