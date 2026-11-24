@@ -142,7 +142,7 @@ async def sockets(ws: WebSocket) -> None:
 |---|---|
 | `{"op": "subscribe", "group": "w", "channels": ["quote:AAPL"]}` | `{"op": "ack", "group": "w", "subscribed": [...], "rejected": [...]}` |
 | `{"op": "unsubscribe", "group": "w"}` (`channels` optional) | `{"op": "ack", "group": "w", "unsubscribed": [...], "rejected": [...]}` |
-| `{"op": "list"}` | `{"op": "list", "groups": {...}, "sources": {"quote": "live"}}` |
+| `{"op": "list"}` | `{"op": "list", "groups": {...}, "saved": {...}, "sources": {"quote": "live"}}`: `groups` is what this connection has joined, `saved` what the identity has saved (from any connection) |
 | `{"op": "restore"}` | `{"op": "ack", "restored": {...}, "rejected": [...]}` |
 
 An `id` in the request is echoed. A refused request gets

@@ -215,6 +215,26 @@ async def test_handle_speaks_the_subscription_protocol(app_factory: AppFactory) 
         assert restored["op"] == "ack" and restored["restored"] == {}
 
 
+async def test_list_shows_saved_groups_of_a_new_connection(
+    app_factory: AppFactory,
+) -> None:
+    app = app_factory()
+    quiet_feed(app)
+    async with app.feeds.watch("ada") as first:
+        await first.handle(
+            {"op": "subscribe", "group": "w", "channels": ["quote:AAPL", "quote:MSFT"]}
+        )
+    async with app.feeds.watch("ada") as second:
+        listing = await second.handle({"op": "list"})
+        assert listing["groups"] == {}  # this connection has joined nothing yet
+        assert listing["saved"] == {"w": ["quote:AAPL", "quote:MSFT"]}
+        await second.handle({"op": "restore"})
+        listing = await second.handle({"op": "list"})
+        assert listing["groups"] == listing["saved"]
+    async with app.feeds.watch("someone-else") as other:
+        assert (await other.handle({"op": "list"}))["saved"] == {}
+
+
 def test_update_to_dict() -> None:
     update = Update("data", "quote:AAPL", {"px": 1}, cached=True)
     assert update.to_dict() == {

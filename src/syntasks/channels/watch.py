@@ -243,7 +243,9 @@ class Watch:
         Run one request of the subscription protocol and return the reply.
 
         ``{"op": "subscribe", "group": "w", "channels": ["quote:AAPL"]}``,
-        ``unsubscribe`` (``channels`` optional), ``list`` and ``restore``. An
+        ``unsubscribe`` (``channels`` optional), ``list`` (the groups this
+        connection has joined, and the groups saved for the identity) and
+        ``restore`` (join the saved groups). An
         ``id`` in the request is echoed. Failures come back as
         ``{"op": "error", "error": code, "error_description": ...}``.
 
@@ -292,6 +294,7 @@ class Watch:
                     "op": "list",
                     **reply,
                     "groups": self.groups(),
+                    "saved": await self.saved(),
                     "sources": await self.feeds.states(),
                 }
             if op == "restore":

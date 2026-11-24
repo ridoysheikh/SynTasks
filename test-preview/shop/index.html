@@ -274,7 +274,10 @@ function wlOpen() {
   if (wl) wl.close();
   quotes = {}; renderQuotes();
   wl = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/watch?user=${encodeURIComponent($("wl-user").value)}`);
-  wl.onopen = () => out("o-wl", `socket open for user ${$("wl-user").value}`);
+  wl.onopen = () => {
+    out("o-wl", `socket open for user ${$("wl-user").value}: this tab has joined nothing yet; "saved" below is what the user saved from other tabs (Restore joins it)`);
+    wl.send(J({op: "list"}));
+  };
   wl.onclose = () => out("o-wl", "socket closed", true);
   wl.onmessage = e => {
     const m = JSON.parse(e.data);

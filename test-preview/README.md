@@ -85,7 +85,7 @@ Things worth doing:
 - **Retries.** Send the charge `A-1007`: it fails once, is retried, and the result says it finished on attempt 2 and which machine ran it.
 - **Kill a worker** (`./dev.sh kill worker1`) while the cluster card refreshes. Its processes disappear, the other machine carries on, the `heartbeat` schedule keeps firing, and a channel it hosted moves.
 - **Live channel.** Open the page in two browser tabs, connect `staff:ada` in one and `staff:alan` in the other: one handler serves both. Alan can read but is refused when he posts; `guest:eve` can't connect.
-- **Watchlists.** In two tabs with the same user, subscribe a group of symbols in the first, then use *Restore* in the second: it joins the first tab's groups and gets the last values at once. *Vendor calls* shows the vendor is asked once per symbol, and it stops about two seconds after the last tab leaves.
+- **Watchlists.** In two tabs with the same user, subscribe a group of symbols in the first. The second tab's *List* shows it under `saved` (saved per user, in Redis) but `groups` stays empty: a new tab joins nothing by itself, because each tab shows its own panels. *Restore* joins the saved groups and gets the last values at once. *Vendor calls* shows the vendor is asked once per symbol, and it stops about two seconds after the last tab leaves.
 - **Posts.** Schedule four posts for one owner: the fourth is refused (`max_per_owner = 3`). A post set 20 s ahead runs on a worker and shows `done / ok`.
 
 The endpoints are plain JSON, so `curl` works too, and
