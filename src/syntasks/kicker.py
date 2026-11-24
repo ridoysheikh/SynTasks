@@ -112,6 +112,67 @@ class AsyncKicker(Generic[_FuncParams, _ReturnType]):
         self.labels["timeout"] = seconds
         return self
 
+    def then(self, task: Any) -> "AsyncKicker[_FuncParams, _ReturnType]":
+        """
+        Send ``task`` with a :class:`~syntasks.TaskOutcome` if this call succeeds.
+
+        :param task: decorated task or task name.
+        :return: kicker.
+        """
+        self.labels["_then"] = task if isinstance(task, str) else task.task_name
+        return self
+
+    def catch(self, task: Any) -> "AsyncKicker[_FuncParams, _ReturnType]":
+        """
+        Send ``task`` with a :class:`~syntasks.TaskOutcome` if this call fails.
+
+        It is sent after the last retry.
+
+        :param task: decorated task or task name.
+        :return: kicker.
+        """
+        self.labels["_catch"] = task if isinstance(task, str) else task.task_name
+        return self
+
+    async def call(self, *args: Any, **kwargs: Any) -> Any:
+        """
+        Send this call and wait for its value (request / reply).
+
+        Sent at the highest priority with a short-lived result. Raises the
+        task's own exception if it failed, or :class:`TaskTimeoutError` if
+        it ran out of time (``with_timeout(...)`` or the task's timeout).
+
+        :param args: arguments.
+        :param kwargs: keyword arguments.
+        :return: the task's return value.
+        """
+        from syntasks.exceptions import (  # noqa: PLC0415
+            SynTasksResultTimeoutError,
+            TaskTimeoutError,
+        )
+
+        self.labels.setdefault("priority", 0)
+        self.labels.setdefault("_result_ttl", 60)
+        limit: float | None = None
+        options_for = getattr(self.broker, "options_for", None)
+        if "timeout" in self.labels:
+            limit = float(self.labels["timeout"])
+        elif options_for is not None:
+            limit = options_for(self.task_name).timeout
+        wait = -1.0
+        if limit is not None:
+            grace = options_for(self.task_name).grace if options_for else 30.0
+            wait = limit + grace + 5.0
+        handle = await self.kiq(*args, **kwargs)
+        try:
+            result = await handle.wait_result(timeout=wait)
+        except SynTasksResultTimeoutError:
+            raise TaskTimeoutError(
+                task_name=self.task_name, timeout=limit or 0.0
+            ) from None
+        result.raise_for_error()
+        return result.return_value
+
     def with_task_id(
         self,
         task_id: str | None,

@@ -154,6 +154,18 @@ class AsyncSynTasksDecoratedTask(Generic[_FuncParams, _ReturnType]):
         """
         return await self._schedules().create(self.task_name, timing, **options)
 
+    async def call(self, *args: Any, **kwargs: Any) -> Any:
+        """
+        Send a call and wait for its value (request / reply).
+
+        See :meth:`~syntasks.kicker.AsyncKicker.call`.
+
+        :param args: arguments.
+        :param kwargs: keyword arguments.
+        :return: the task's return value.
+        """
+        return await self.kicker().call(*args, **kwargs)
+
     @property
     def schedules(self) -> Any:
         """The runtime copies of this schedule (list, update, cancel)."""

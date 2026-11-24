@@ -56,6 +56,8 @@ class TaskOptions:
     fair: bool = False
     debounce: float | None = None
     throttle: float | None = None
+    on_success: str | None = None
+    on_failure: str | None = None
     retries: int = 0
     retry_delay: float = 1.0
     retry_backoff: float = 2.0
@@ -144,6 +146,9 @@ def parse_layer(owner: str, options: Mapping[str, Any]) -> OptionLayer:
             fix = " Use 0 for no retries." if name == "retries" else ""
             raise ConfigError(detail=f"{owner}: {name} can't be None.{fix}")
     data = {k: _plain(v) for k, v in options.items() if v is not None}
+    for name in ("on_success", "on_failure"):
+        if name in data and not isinstance(data[name], str):
+            data[name] = getattr(data[name], "task_name", data[name])
     if isinstance(data.get("rate"), Rate):
         data["rate"] = str(data["rate"])
     return OptionLayer(build(TaskConfig, data, owner), frozenset(options), owner)

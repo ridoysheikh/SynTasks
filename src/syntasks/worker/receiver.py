@@ -151,7 +151,7 @@ class AppReceiver(Receiver):
         )
         ack.is_acked = True
 
-    async def _process(  # noqa: C901, PLR0912, PLR0915
+    async def _process(  # noqa: C901, PLR0911, PLR0912, PLR0915
         self,
         message: bytes | AckableMessage,
         delivery: Delivery | None,
@@ -200,6 +200,13 @@ class AppReceiver(Receiver):
                 ),
             )
             await ack.ack()
+            return
+
+        if (
+            delivery is not None
+            and msg.labels.get("_batch")
+            and not await self.app.completion.batch_gate(delivery, msg)
+        ):
             return
 
         if delivery is not None and options.rate_per_key is not None and options.key:
@@ -284,10 +291,13 @@ class AppReceiver(Receiver):
         if not retried:
             try:
                 if options.store_result and not isinstance(result.error, NoResultError):
+                    ttl = options.result_ttl
+                    if msg.labels.get("_result_ttl") not in (None, ""):
+                        ttl = float(msg.labels["_result_ttl"])
                     await self.app.result_backend.store(
                         msg.task_id,
                         result,
-                        ttl=options.result_ttl,
+                        ttl=ttl,
                         max_size=options.max_result,
                     )
                     for middleware in reversed(self.app.middlewares):
@@ -318,6 +328,10 @@ class AppReceiver(Receiver):
                 )
             if self.app.schedules is not None and msg.labels.get("_schedule"):
                 await self.app.schedules.record_run(msg, result)
+            try:
+                await self.app.completion.after_run(msg, result, options)
+            except Exception:
+                logger.exception("Can't send the callbacks of %s.", msg.task_id)
 
         if (ack_time == AcknowledgeType.WHEN_SAVED and ack.is_ackable) or (
             ack_time == AcknowledgeType.MANUAL and retried and ack.is_ackable

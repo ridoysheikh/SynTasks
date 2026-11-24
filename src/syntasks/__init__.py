@@ -50,6 +50,13 @@ from syntasks.redis import (
     RedisStreamBroker,
 )
 from syntasks.result import SynTasksResult
+from syntasks.results.completion import (
+    Batch,
+    BatchOutcome,
+    BatchProgress,
+    GroupOutcome,
+    TaskOutcome,
+)
 from syntasks.scheduler import (
     Runtime,
     ScheduleError,
@@ -72,6 +79,9 @@ __all__ = [
     "AsyncResultBackend",
     "AsyncSynTasksDecoratedTask",
     "AsyncSynTasksTask",
+    "Batch",
+    "BatchOutcome",
+    "BatchProgress",
     "BrokerMessage",
     "Channel",
     "ChannelMessage",
@@ -81,6 +91,7 @@ __all__ = [
     "Deadline",
     "Depends",
     "DuplicateTaskError",
+    "GroupOutcome",
     "InMemoryBroker",
     "Module",
     "ModuleNotAttachedError",
@@ -118,6 +129,7 @@ __all__ = [
     "SynTasksState",
     "TaskCancelledError",
     "TaskMemoryError",
+    "TaskOutcome",
     "TaskSupersededError",
     "TaskTimeoutError",
     "__version__",

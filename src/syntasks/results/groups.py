@@ -54,6 +54,18 @@ class TaskGroup:
         self.handles.append(handle)
         return handle
 
+    async def then(self, task: Any) -> None:
+        """
+        Send ``task`` once, with a :class:`~syntasks.GroupOutcome`, at the end.
+
+        It is sent when every member sent so far has finished, on any
+        machine. Call it after the last :meth:`kiq`.
+
+        :param task: decorated task or task name.
+        """
+        name = task if isinstance(task, str) else task.task_name
+        await self.app.completion.seal_group(self.id, len(self.handles), name)
+
     async def as_completed(  # noqa: C901
         self,
         timeout: float | None = None,

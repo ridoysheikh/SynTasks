@@ -249,6 +249,14 @@ class TaskConfig:
         doc="Run the first call per key, drop the rest for this long (needs key).",
         scope="cluster",
     )
+    on_success: str | None = setting(
+        doc="Task sent with a TaskOutcome after a successful run.",
+        scope="cluster",
+    )
+    on_failure: str | None = setting(
+        doc="Task sent with a TaskOutcome after the final failed attempt.",
+        scope="cluster",
+    )
     retries: int | None = setting(doc="Retries after an exception.", scope="cluster")
     retry_delay: float | None = setting(
         unit="duration",

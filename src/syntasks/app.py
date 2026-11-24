@@ -151,9 +151,11 @@ class SynTasks(Declarations, AsyncBroker):  # type: ignore[misc]
         """Attach schedules, channels, logs and task control."""
         from syntasks.channels import ChannelManager  # noqa: PLC0415
         from syntasks.logs import LogManager  # noqa: PLC0415
+        from syntasks.results.completion import Completion  # noqa: PLC0415
         from syntasks.scheduler import ScheduleManager  # noqa: PLC0415
         from syntasks.worker.control import TaskControl  # noqa: PLC0415
 
+        self.completion = Completion(self)
         self.schedules = ScheduleManager(self)
         self.channels = ChannelManager(self)
         self.logs = LogManager(self)
@@ -280,6 +282,20 @@ class SynTasks(Declarations, AsyncBroker):  # type: ignore[misc]
         :return: task group.
         """
         return TaskGroup(self, group_id)
+
+    async def batch(self, batch_id: str, *, owner: str | None = None) -> Any:
+        """
+        A named, persistent group of tasks (a campaign); created if new.
+
+        :param batch_id: batch id.
+        :param owner: who it belongs to.
+        :return: :class:`~syntasks.results.completion.Batch`.
+        """
+        from syntasks.results.completion import Batch  # noqa: PLC0415
+
+        batch = Batch(self, batch_id)
+        await batch._create(owner)  # noqa: SLF001
+        return batch
 
     def kicker(self, task_name: str) -> AsyncKicker[Any, Any]:
         """

@@ -99,6 +99,10 @@ def _noop_ack() -> None:  # pragma: no cover
     """Placeholder; replaced right after the delivery is built."""
 
 
+# How long a callback's one-time key is kept.
+_ONCE_TTL_MS = 86_400_000
+
+
 def _delay_ms(raw_delay: Any) -> str:
     """The ``delay`` label in milliseconds, or ``""`` for none."""
     if raw_delay in (None, "", 0, "0"):
@@ -261,7 +265,7 @@ class QueueEngine:
             return None
         return key_text(value)
 
-    def _delayed_member(self, stream: str, task_name: str, data: bytes) -> bytes:
+    def delayed_member(self, stream: str, task_name: str, data: bytes) -> bytes:
         """A delayed-zset member: random prefix, stream, task, data."""
         head = (
             f"{uuid.uuid4().hex}{len(stream):04d}{stream}"
@@ -288,7 +292,7 @@ class QueueEngine:
                 stream,
             ],
             [
-                self._delayed_member(stream, message.task_name, message.message),
+                self.delayed_member(stream, message.task_name, message.message),
                 math.ceil(options.debounce * 1000),
                 message.task_id,
                 queue,
@@ -350,6 +354,10 @@ class QueueEngine:
         if options.throttle and key is not None and not retry:
             unique_ttl = str(math.ceil(options.throttle * 1000))
             unique_key = self.keys("q", "throttle", message.task_name, key)
+        once = message.labels.get("_once")
+        if once and not retry:  # a callback: sent once, however often it's asked
+            unique_ttl = str(_ONCE_TTL_MS)
+            unique_key = self.keys("q", "once", str(once))
         fair_key = key if options.fair and key is not None and not delay_ms else ""
         fair = self.keys("q", queue, "fair", message.task_name)
         reply = await scripts.KICK(
@@ -852,9 +860,7 @@ class QueueEngine:
                 rate.burst,
                 self.group,
                 delivery.entry_id,
-                self._delayed_member(
-                    delivery.stream, delivery.task_name, delivery.data
-                ),
+                self.delayed_member(delivery.stream, delivery.task_name, delivery.data),
             ],
         )
         if reply[0] == b"ok":
