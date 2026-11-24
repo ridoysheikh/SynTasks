@@ -43,22 +43,27 @@ Install the web dependencies once (`fastapi`, `uvicorn`, `websockets`):
 uv sync --all-extras --group preview        # from the repository root
 ```
 
-Then, from `test-preview/`, one script runs the whole thing (a throwaway
-Redis on port 55460, two workers, one web server) in the background, with a
-log file for each:
+Then, from `test-preview/`, one script runs it all, each service in its own
+terminal tab (one window: **redis**, **worker1**, **worker2**, **web**), so you
+watch every log live:
 
 ```bash
-./dev.sh start             # starts everything and waits until it is up
-./dev.sh logs              # follow all logs together (Ctrl-C stops following only)
-./dev.sh logs worker1      # or one of: redis, worker1, worker2, web
+./dev.sh                   # opens the tabs and waits until the cluster is up
+./dev.sh open              # open the page in your browser
 ./dev.sh status            # what is running, and the cluster seen from the web server
 ./dev.sh kill worker1      # SIGKILL one worker "machine": watch the other take over
 ./dev.sh stop              # stop everything (workers shut down gracefully)
 ```
 
-Logs and pids are in `test-preview/.dev/` (git-ignored). `WEB_PORT` and
-`REDIS_PORT` change the ports. If something already listens on the Redis
-port, `dev.sh` uses that Redis and leaves it running on `stop`.
+A tab whose service stops (killed, Ctrl-C, a crash) stays open and says so:
+**Enter starts it again**; closing the tab quits it. `./dev.sh web` or
+`./dev.sh worker1` start just one; `./dev.sh run worker1` runs one in the
+current terminal. Without a desktop (or with `DEV_TERM=bg`) the services run
+in the background instead; follow them with `./dev.sh logs [name]`. Every
+service also writes `.dev/logs/<name>.log` (git-ignored).
+
+`WEB_PORT` and `REDIS_PORT` change the ports. If something already listens on
+the Redis port, `dev.sh` uses that Redis and never stops it.
 
 <details>
 <summary>The same by hand, one terminal each</summary>
@@ -137,7 +142,7 @@ folder the walkthrough prints.
 | `shop/live.py` | `Module("live", ...)`: a channel handler with `authorize`, and the `quote` feed |
 | `shop/__main__.py` | `python -m shop <command>`: one command per feature |
 | `shop/web.py` | the FastAPI web server: sends tasks, reads results and events, schedules posts, relays the live channel and the watchlist sockets |
-| `dev.sh` | start / stop / logs / status / kill for Redis, two workers and the web server |
+| `dev.sh` | Redis, two workers and the web server, each in its own terminal tab; start / stop / status / kill / logs |
 | `shop/index.html` | the page it serves at `/`: one card per feature |
 | `walkthrough.py` | runs the story above |
 | `docker-compose.yml` | Redis on port 55460, if you'd rather not install `redis-server` |
