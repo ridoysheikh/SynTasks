@@ -66,6 +66,24 @@ uvx twine check dist/*
 (cd dist && sha256sum ./*.whl ./*.tar.gz | sed 's| \./| |' > SHA256SUMS)
 ls dist/"syntasks-$PYV-py3-none-any.whl" >/dev/null || die "the wheel is not version $PYV"
 
+# Smoke test: the wheel alone, in an empty environment, must install with no
+# other packages and run (the core depends only on the standard library).
+step "Smoke test"
+smoke=$(mktemp -d)
+trap 'rm -rf "$smoke"' EXIT
+uv venv -q "$smoke/venv"
+uv pip install -q --python "$smoke/venv/bin/python" dist/"syntasks-$PYV-py3-none-any.whl"
+installed=$(uv pip list --python "$smoke/venv/bin/python" --format freeze | cut -d= -f1)
+[ "$installed" = "syntasks" ] || die "the wheel pulled in other packages: $(echo $installed | tr '\n' ' ')"
+(cd "$smoke" && venv/bin/python -I -c "
+import syntasks
+assert syntasks.__version__ == '$PYV', syntasks.__version__
+assert syntasks.__file__.startswith('$smoke'), syntasks.__file__
+") || die "the installed wheel does not import as version $PYV from the venv"
+(cd "$smoke" && venv/bin/syntasks --version >/dev/null && venv/bin/syntasks worker --help >/dev/null) \
+  || die "the installed wheel's syntasks command fails"
+echo "ok: syntasks $PYV installs alone and runs"
+
 # Release notes: the CHANGELOG section, then how to install.
 notes=$(mktemp)
 awk -v v="$V" 'index($0, "## [" v "]") == 1 {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md > "$notes"
