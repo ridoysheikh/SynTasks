@@ -33,7 +33,8 @@ end
 #       12 delayed member prefix (32 chars)
 KICK = Script(
     "queue_kick",
-    _HELPERS + """
+    _HELPERS
+    + """
 if ARGV[7] ~= '' then
   local existing = redis.call('GET', KEYS[5])
   if existing then return {'dup', existing} end
@@ -74,7 +75,8 @@ return {'ok', id}
 # Returns {moved, next due ms or ''}.
 MOVE_DELAYED = Script(
     "queue_move_delayed",
-    _HELPERS + """
+    _HELPERS
+    + """
 local now = now_ms()
 local due = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now, 'LIMIT', 0, tonumber(ARGV[2]))
 for _, member in ipairs(due) do
@@ -117,7 +119,9 @@ end
 # Returns flat {id, fields, id, fields, ...}.
 CLAIM_ABANDONED = Script(
     "queue_claim",
-    _HELPERS + _DEAD_LETTER + """
+    _HELPERS
+    + _DEAD_LETTER
+    + """
 local ok, reply = pcall(redis.call, 'XAUTOCLAIM', KEYS[1], ARGV[2], ARGV[3], ARGV[4], '0-0', 'COUNT', ARGV[5])
 if not ok then return {} end
 local out = {}
@@ -153,7 +157,9 @@ return out
 # Returns {'ok', id, fields} | {'busy'} | {'rate', wait ms} | {'empty'}.
 GATED_TAKE = Script(
     "queue_gated_take",
-    _HELPERS + _DEAD_LETTER + """
+    _HELPERS
+    + _DEAD_LETTER
+    + """
 local now = now_ms()
 if ARGV[5] ~= '' then
   redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
@@ -243,7 +249,8 @@ return 1
 # KEYS: 1 stream, 2 wake list; ARGV: 2 group, 3 id, 4 data, 5 task, 6 wake '1'|''
 REQUEUE = Script(
     "queue_requeue",
-    _HELPERS + """
+    _HELPERS
+    + """
 redis.call('XADD', KEYS[1], '*', 'data', ARGV[4], 'task', ARGV[5])
 redis.call('XACK', KEYS[1], ARGV[2], ARGV[3])
 redis.call('XDEL', KEYS[1], ARGV[3])
@@ -311,7 +318,9 @@ end
 # ARGV: 2 holder, 3 transfer ttl ms, 4 group, 5 key prefix
 KEY_RELEASE = Script(
     "queue_key_release",
-    _HELPERS + _UNPARK + """
+    _HELPERS
+    + _UNPARK
+    + """
 redis.call('ZREM', KEYS[1], ARGV[2])
 return unpark(KEYS[1], KEYS[2], ARGV[3], ARGV[4], ARGV[5])
 """,
@@ -321,7 +330,9 @@ return unpark(KEYS[1], KEYS[2], ARGV[3], ARGV[4], ARGV[5])
 # KEYS: 1 parks index; ARGV: 2 transfer ttl ms, 3 group, 4 key prefix
 UNPARK_FREE = Script(
     "queue_unpark_free",
-    _HELPERS + _UNPARK + """
+    _HELPERS
+    + _UNPARK
+    + """
 local now = now_ms()
 local moved = 0
 for _, entry in ipairs(redis.call('SMEMBERS', KEYS[1])) do

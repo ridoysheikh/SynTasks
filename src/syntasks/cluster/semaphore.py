@@ -58,7 +58,8 @@ if removed == 1 then
   redis.call('PEXPIRE', KEYS[2], 60000)
 end
 return removed
-""" % (WAKE_KEEP - 1),
+"""
+    % (WAKE_KEEP - 1),
 )
 
 _RELEASE_PREFIX = Script(
@@ -81,7 +82,8 @@ if released > 0 then
   redis.call('PEXPIRE', KEYS[2], 60000)
 end
 return released
-""" % (WAKE_KEEP - 1),  # noqa: E501
+"""
+    % (WAKE_KEEP - 1),
 )
 
 

@@ -197,7 +197,8 @@ return out
 #       15.. triples: data, fire, task id
 COMMIT = Script(
     "sched_commit",
-    _HELPERS + """
+    _HELPERS
+    + """
 if redis.call('HGET', KEYS[1], 'claim_token') ~= ARGV[2] then return {'lost'} end
 local now = now_ms()
 local running = 0

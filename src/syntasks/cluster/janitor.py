@@ -76,8 +76,7 @@ class Janitor:
                     logger.exception("Dead-node hook failed for %s.", node_id)
             await self.nodes.remove(node_id)
             logger.warning(
-                "Node %s stopped sending heartbeats; removed it and freed "
-                "%d slot(s).",
+                "Node %s stopped sending heartbeats; removed it and freed %d slot(s).",
                 node_id,
                 released,
             )

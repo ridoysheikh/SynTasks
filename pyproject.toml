@@ -5,11 +5,11 @@ readme = "README.md"
 requires-python = ">=3.11,<4"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
-authors = [{ name = "Synlor" }]
-maintainers = [{ name = "Synlor" }]
-keywords = ["async", "distributed", "queue", "redis", "syntasks", "tasks"]
+authors = [{ name = "ridoysheikh", email = "ridoysheikh778@gmail.com" }, { name = "Synlor" }]
+keywords = ["async", "asyncio", "distributed", "task-queue", "queue", "redis", "scheduler", "cron", "worker", "channels"]
 classifiers = [
   "Development Status :: 3 - Alpha",
+  "Framework :: AsyncIO",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
@@ -20,6 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Topic :: System :: Distributed Computing",
   "Topic :: System :: Networking",
   "Typing :: Typed"
 ]
@@ -29,11 +30,11 @@ dependencies = []
 dynamic = ["version"]
 
 [project.urls]
-"Bug Tracker" = "https://github.com/synlor/syntasks/issues"
-Changelog = "https://github.com/synlor/syntasks/releases"
-Documentation = "https://syntasks.synlor.com/"
-Homepage = "https://synlor.com"
-Repository = "https://github.com/synlor/syntasks"
+Homepage = "https://github.com/ridoysheikh/syntasks"
+Source = "https://github.com/ridoysheikh/syntasks"
+Issues = "https://github.com/ridoysheikh/syntasks/issues"
+Changelog = "https://github.com/ridoysheikh/syntasks/blob/main/CHANGELOG.md"
+Synlor = "https://synlor.com"
 
 [project.scripts]
 syntasks = "syntasks.__main__:main"
@@ -67,7 +68,6 @@ uv = ["uvloop>=0.16.0,<1; sys_platform != 'win32'"]
 
 [dependency-groups]
 dev = [
-  "prek>=0.5.3",
   # type check
   "mypy>=1.18.2",
   # test
@@ -84,10 +84,6 @@ dev = [
   "pydantic>=2.5,<3.0",
   # lint
   "ruff>=0.16.7",
-  "black>=26.5.1",
-  # tests with all python versions
-  "tox>=4.61.4",
-  "tox-uv>=1.36.0",
   "tzdata>=2026.4; sys_platform == 'win32'",
 ]
 
@@ -109,9 +105,6 @@ include = ["src", "tests", "docs", "examples", "README.md", "CHANGELOG.md", "LIC
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/syntasks"]
-
-[tool.black]
-target-version = ["py311"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -177,7 +170,8 @@ lint.ignore = [
   "ANN401",  # typing.Any are disallowed in `**kwargs
   "PLR0913",  # Too many arguments for function call
   "PLR0917",  # Too many positional arguments
-  "D106"  # Missing docstring in public nested class
+  "D106",  # Missing docstring in public nested class
+  "COM812",  # Conflicts with the formatter
 ]
 lint.mccabe = { max-complexity = 10 }
 
@@ -200,7 +194,7 @@ lint.mccabe = { max-complexity = 10 }
   "E501",  # Lua source
   "UP031",
 ]
-"src/syntasks/cluster/semaphore.py" = ["UP031"]  # Lua source with % substitution
+"src/syntasks/cluster/semaphore.py" = ["E501", "UP031"]  # Lua source with % substitution
 "tests/**/*" = [
   "S101",  # Use of assert detected
   "S105",  # Hardcoded password (test credentials)
@@ -238,19 +232,3 @@ ignore-decorators = ["typing.overload"]
 
 [tool.ruff.lint.pylint]
 allow-magic-value-types = ["int", "str", "float", "bytes"]
-
-[tool.tox]
-requires = ["tox>=4"]
-isolated_build = true
-env_list = ["3.14", "3.13", "3.12", "3.11"]
-
-[tool.tox.env_run_base]
-description = "Run tests with Python {base_python}"
-runner = "uv-venv-lock-runner"
-uv_sync_flags = ["--all-extras"]
-commands = [["pytest", "-vv", "-n", "auto"]]
-
-[tool.typos.files]
-extend-exclude = [
-  "docs/README.md"  # because of identifier in head section
-]

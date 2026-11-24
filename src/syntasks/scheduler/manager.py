@@ -1033,7 +1033,9 @@ class ScheduleManager:
         probe_labels = (
             messages[0].labels
             if messages
-            else {"queue": spec.queue} if spec.queue else {}
+            else {"queue": spec.queue}
+            if spec.queue
+            else {}
         )
         queue, stream, options = engine.route(spec.task, probe_labels)
         triples: builtins.list[Any] = []
