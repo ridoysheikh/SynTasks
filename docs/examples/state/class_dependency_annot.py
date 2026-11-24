@@ -1,0 +1,19 @@
+from typing import Annotated
+
+from syntasks import SynTasksDepends
+
+
+async def db_connection() -> str:
+    return "let's pretend as this is a connection"
+
+
+class MyDAO:
+    def __init__(self, db_conn: Annotated[str, SynTasksDepends(db_connection)]) -> None:
+        self.db_conn = db_conn
+
+    def get_users(self) -> str:
+        return self.db_conn.upper()
+
+
+def my_task(dao: Annotated[MyDAO, SynTasksDepends()]) -> None:
+    print(dao.get_users())
