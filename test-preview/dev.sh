@@ -42,7 +42,7 @@ exec_service() {
   cd "$ROOT"
   case $1 in
     redis)   exec redis-server --port "$REDIS_PORT" --save "" --appendonly no ;;
-    worker1|worker2) exec "$VENV/syntasks" worker ;;
+    worker1|worker2) exec "$VENV/syntasks" run ;;
     web)     WEB_NAME=web exec "$VENV/uvicorn" shop.web:api --port "$WEB_PORT" --reload --reload-dir shop --use-colors ;;
   esac
 }

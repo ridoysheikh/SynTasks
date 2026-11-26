@@ -12,7 +12,7 @@ question and stays short. Find what you want to do below and follow the link.
 
 - **Redis is the source of truth.** No worker keeps cluster state only in
   memory, so any machine can die at any moment.
-- **No special processes.** Every machine runs `syntasks worker`. Jobs that
+- **No special processes.** Every machine runs `syntasks run`. Jobs that
   need one owner (firing schedules, cleanup, a channel's handler) are taken
   with leases and move to another machine when their owner dies.
 - **Atomic decisions.** Taking a concurrency slot, firing a schedule,

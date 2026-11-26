@@ -12,7 +12,9 @@ from syntasks.dependencies.utils import ParamInfo
 
 FastapiDepends: Any
 try:
-    from fastapi.params import Depends as FastapiDepends
+    from fastapi import params as fastapi_params
+
+    FastapiDepends = fastapi_params.Depends
 except ImportError:
     FastapiDepends = None
 

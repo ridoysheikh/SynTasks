@@ -2,6 +2,25 @@
 
 All notable changes are listed here. Versions follow [semantic versioning](https://semver.org); until 1.0, minor versions may contain breaking changes, and each entry says how to upgrade.
 
+## [0.2.0]
+
+### Changed (breaking)
+
+- **`syntasks worker` is now `syntasks run`.** It is the one command that runs the app on a machine: its worker processes execute tasks, fire schedules and host channels. `worker` is gone; there is no alias.
+
+### Added
+
+- **Watch protocol:** `list` also returns `saved`, the groups saved for the identity from any connection, next to `groups`, which this connection has joined.
+- **`test-preview/`** has FastAPI web servers with a browser page that drives every feature, and `dev.sh` to run it all (`uv sync --group preview`).
+
+### Fixed
+
+- mypy passes whether or not FastAPI is installed.
+
+### Upgrading from 0.1.0
+
+Change the command wherever a machine is started (service files, containers, compose files, scripts) from `syntasks worker …` to `syntasks run …`. Its arguments and flags are the same, and so is `syntasks.toml`, including the `[worker]` section.
+
 ## [0.1.0]
 
 The first release. SynTasks started from [taskiq](https://github.com/taskiq-python/taskiq); coming from taskiq, see [Upgrading from taskiq](#upgrading-from-taskiq) below.

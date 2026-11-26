@@ -2,7 +2,7 @@
 # Every setting: ../docs/reference/config.md
 [app]
 name = "shop"                 # key prefix in Redis
-app = "shop.app:app"          # where `syntasks worker` finds the app
+app = "shop.app:app"          # where `syntasks run` finds the app
 revision = 1                  # bump on deploy: older workers adopt newer limits
 
 [redis]

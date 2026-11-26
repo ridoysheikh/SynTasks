@@ -49,7 +49,7 @@ class MultiBroker(AsyncBroker):
     >>> @broker.task(labels={"queue_name": "slow"})
     ... async def my_task() -> None: ...
 
-    A single `syntasks worker` command consumes messages
+    A single `syntasks run` command consumes messages
     from all inner brokers this way.
 
     :param routing: mapping of routing label values to brokers,

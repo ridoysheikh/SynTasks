@@ -1,6 +1,6 @@
 """SynTasks: distributed async task queue with built-in Redis, by Synlor."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from syntasks.abc.broker import AsyncBroker, AsyncSynTasksDecoratedTask
 from syntasks.abc.formatter import SynTasksFormatter

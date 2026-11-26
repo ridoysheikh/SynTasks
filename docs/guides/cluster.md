@@ -4,7 +4,7 @@ How SynTasks behaves on 10 to 100 machines.
 
 ## Processes
 
-`syntasks worker` is a supervisor. It starts `worker.processes` worker
+`syntasks run` is a supervisor. It starts `worker.processes` worker
 processes and restarts them: right away when they exit to be recycled
 (memory soft limit, a stuck task, `max_tasks_per_process`), with a short
 backoff after a crash (`worker.max_restarts` stops the supervisor after

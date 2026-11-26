@@ -27,7 +27,7 @@ async def run_receiver_task(
 
     This function helps people to dynamically define brokers
     and start listening to them within their own code,
-    without using syntasks worker command.
+    without using syntasks run command.
 
     This command is less robust and it doesn't have
     multiprocessing support. Because it's not always

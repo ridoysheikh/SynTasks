@@ -1,7 +1,7 @@
 # SynTasks test preview: a shop on two machines
 
 A small, realistic app that runs every part of SynTasks for real: two
-`syntasks worker` "machines" with two processes each, one Redis, and a
+`syntasks run` "machines" with two processes each, one Redis, and a
 walkthrough that drives them step by step, then kills one machine.
 
 ## Run it
@@ -70,8 +70,8 @@ the Redis port, `dev.sh` uses that Redis and never stops it.
 
 ```bash
 redis-server --port 55460 --save "" --appendonly no      # or: docker compose up -d --wait
-../.venv/bin/syntasks worker                              # worker1 (one "machine", 2 processes)
-../.venv/bin/syntasks worker                              # worker2 (another "machine")
+../.venv/bin/syntasks run                                 # worker1 (one "machine", 2 processes)
+../.venv/bin/syntasks run                                 # worker2 (another "machine")
 ../.venv/bin/uvicorn shop.web:api --port 8001             # the web server
 ```
 
@@ -109,7 +109,7 @@ and a watchlist saved through one server is restored through the other.
 ## What the walkthrough does
 
 Each step prints the exact command it runs, so you can repeat any of them
-by hand (with workers running: `syntasks worker` in this folder).
+by hand (with workers running: `syntasks run` in this folder).
 
 1. **`syntasks config check`**: the app imports and every declaration has its required limits.
 2. **`syntasks nodes`, `schedules list`**: four worker processes; declared schedules synced into Redis.

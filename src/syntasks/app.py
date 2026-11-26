@@ -13,7 +13,7 @@ Example::
     @app.task(timeout="30s", retries=3, max_tasks=20)
     async def charge(customer_id: str, cents: int) -> None: ...
 
-Run workers with ``syntasks worker``.
+Run workers with ``syntasks run``.
 """
 
 import asyncio
@@ -377,7 +377,7 @@ class SynTasks(Declarations, AsyncBroker):  # type: ignore[misc]
         """
         Run a worker in this process until ``stop`` is set.
 
-        ``syntasks worker`` uses this in each worker process; it is also
+        ``syntasks run`` uses this in each worker process; it is also
         handy in tests and to embed a worker in another program.
 
         :param stop: event that stops the worker.

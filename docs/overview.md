@@ -6,8 +6,8 @@ runs where when two machines are up. Details are in the linked guides.
 ## One command runs everything
 
 ```bash
-syntasks worker        # on worker1
-syntasks worker        # on worker2 (the same command, the same code)
+syntasks run           # on worker1
+syntasks run           # on worker2 (the same command, the same code)
 ```
 
 That is the whole deployment. Each command starts `worker.processes`
@@ -26,7 +26,7 @@ nothing to keep at exactly one copy. With taskiq you run `taskiq worker` and
 the single owner is chosen by a lease in Redis and moves to another node within
 about one TTL when its owner dies.
 
-A real run of the `test-preview` shop on two `syntasks worker` commands
+A real run of the `test-preview` shop on two `syntasks run` commands
 (worker1 and worker2, 2 processes each, so four nodes in one pool; throwaway
 Redis):
 

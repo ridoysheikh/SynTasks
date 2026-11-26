@@ -6,7 +6,7 @@ The shop's web server: FastAPI in front of the same app the workers run.
 
 A web server never runs tasks. It sends them with `.kiq()` / `.call()`, reads
 results and events, schedules runtime copies, and keeps the sockets of users;
-the workers (`syntasks worker`, one or several machines) do the work. One web
+the workers (`syntasks run`, one or several machines) do the work. One web
 server is enough; more than one all serve the same app on the same Redis.
 Open http://127.0.0.1:8001/ for a page that drives every endpoint.
 """

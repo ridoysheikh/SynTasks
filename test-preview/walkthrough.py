@@ -4,7 +4,7 @@ Run the whole SynTasks story on a small shop, one real command at a time.
     python walkthrough.py            # starts a throwaway redis-server if it can
     python walkthrough.py --pause    # wait for Enter after each step
 
-It starts two `syntasks worker` supervisors (two "machines", two processes
+It starts two `syntasks run` supervisors (two "machines", two processes
 each), runs every `python -m shop ...` command against them, then kills one
 machine to show the other taking over. Every step prints the command it
 runs, so you can repeat any of them by hand. Set SHOP_REDIS_URL to use your
@@ -40,7 +40,7 @@ STEPS: list[tuple[str, str, list[list[str]]]] = [
     ),
     (
         "Two machines are running",
-        "Each `syntasks worker` supervises 2 processes; every process is a node with a "
+        "Each `syntasks run` supervises 2 processes; every process is a node with a "
         "heartbeat. Declared schedules were synced into Redis when they started.",
         [["syntasks", "nodes"], ["syntasks", "schedules", "list"]],
     ),
@@ -212,7 +212,7 @@ def start_redis(workdir: Path) -> tuple[str, subprocess.Popen[bytes] | None]:
 def start_worker(name: str, env: dict[str, str], logs: Path) -> subprocess.Popen[bytes]:
     log = (logs / f"{name}.log").open("wb")
     return subprocess.Popen(
-        [sys.executable, "-m", "syntasks", "worker"],
+        [sys.executable, "-m", "syntasks", "run"],
         cwd=HERE,
         env=env,
         stdout=log,

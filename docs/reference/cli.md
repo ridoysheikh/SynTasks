@@ -6,7 +6,7 @@ version.
 
 | Command | Job |
 | --- | --- |
-| `syntasks worker` | run worker processes on this machine |
+| `syntasks run` | run this machine: tasks, schedules and channels |
 | `syntasks config` | check or print the configuration |
 | `syntasks queues` | inspect and operate queues and dead letters |
 | `syntasks schedules` | inspect and operate schedules |
@@ -22,7 +22,7 @@ version.
 | `--config PATH`, `-c` | config file (default: `$SYNTASKS_CONFIG`, then `./syntasks.toml`, then `[tool.syntasks]` in `pyproject.toml`) |
 | `--profile NAME` | apply a [profile](../guides/configuration.md#profiles) (env `SYNTASKS_PROFILE`) |
 
-**Management commands** (everything except `worker` and `config`) also accept:
+**Management commands** (everything except `run` and `config`) also accept:
 
 | Option | Meaning |
 | --- | --- |
@@ -31,13 +31,18 @@ version.
 
 **Errors** print one line and exit with code 1.
 
-## worker
+## run
 
 ```bash
-syntasks worker [APP] [options]
+syntasks run [APP] [options]
 ```
 
-Starts `worker.processes` worker processes and supervises them (restarts
+The one command that runs the app on a machine. There is nothing else to
+start: the worker processes execute tasks, host channel handlers, and
+compete for the dispatcher lease that fires schedules. Run it on as many
+machines as you like.
+
+It starts `worker.processes` worker processes and supervises them (restarts
 after a crash or a recycle, stops gracefully on `SIGTERM`/`SIGINT`,
 restarts them all on `SIGHUP`). A process that fails before it is ready
 is retried with a growing delay; after `worker.max_startup_failures` in a

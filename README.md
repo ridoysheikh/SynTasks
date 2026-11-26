@@ -13,7 +13,7 @@ machines.
   queues, results, scheduler and channels are part of the library.
 - **Redis is the source of truth.** Queues, schedules, limits, channel
   ownership and node membership live in Redis. Every machine runs the same
-  `syntasks worker`; jobs that need a single owner move by lease when a
+  `syntasks run`; jobs that need a single owner move by lease when a
   machine dies.
 - **Code first, for big apps.** Tasks, schedules, channels and queues are
   declared in code, split into modules that pass their limits down.
@@ -51,7 +51,7 @@ pip install syntasks
 Until it's on PyPI, install from a [GitHub release](https://github.com/ridoysheikh/syntasks/releases):
 
 ```bash
-pip install "syntasks @ https://github.com/ridoysheikh/syntasks/releases/download/v0.1.0/syntasks-0.1.0-py3-none-any.whl"
+pip install "syntasks @ https://github.com/ridoysheikh/syntasks/releases/download/v0.2.0/syntasks-0.2.0-py3-none-any.whl"
 ```
 
 ## In five minutes
@@ -91,7 +91,7 @@ processes = 2
 ```
 
 ```bash
-syntasks worker
+syntasks run
 ```
 
 ```python

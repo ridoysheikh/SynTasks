@@ -6,7 +6,7 @@ settings; the web app and the workers share `tasks.py`.
 
 ```bash
 pip install syntasks fastapi uvicorn
-syntasks worker                 # one terminal (or several machines)
+syntasks run                    # one terminal (or several machines)
 uvicorn main:api                # another
 ```
 

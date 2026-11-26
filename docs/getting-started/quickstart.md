@@ -52,7 +52,7 @@ described in the [configuration reference](../reference/config.md).
 ## Run workers
 
 ```bash
-syntasks worker
+syntasks run
 ```
 
 This starts `worker.processes` processes on this machine. Run the same

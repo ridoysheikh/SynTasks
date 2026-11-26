@@ -1,5 +1,5 @@
 # Run from this folder:
-#   syntasks worker          # in one terminal
+#   syntasks run             # in one terminal
 #   python send.py           # in another
 [app]
 name = "basic"

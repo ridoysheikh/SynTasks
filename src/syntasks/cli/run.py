@@ -1,4 +1,4 @@
-"""``syntasks worker``: run worker processes."""
+"""``syntasks run``: run this machine."""
 
 import argparse
 from collections.abc import Sequence
@@ -9,10 +9,10 @@ from syntasks.cli.common import add_config_args, guarded
 from syntasks.worker.supervisor import Supervisor, WorkerSpec, configure_logging
 
 
-class WorkerCMD(SynTasksCMD):
-    """Run workers."""
+class RunCMD(SynTasksCMD):
+    """Run this machine's share of the app."""
 
-    short_help = "Run worker processes"
+    short_help = "Run the app: workers, scheduler and channels"
 
     def exec(self, args: Sequence[str]) -> int | None:
         """
@@ -22,9 +22,10 @@ class WorkerCMD(SynTasksCMD):
         :return: status code.
         """
         parser = argparse.ArgumentParser(
-            prog="syntasks worker",
-            description="Run worker processes. Settings come from syntasks.toml; "
-            "flags override them.",
+            prog="syntasks run",
+            description="Run this machine: worker processes that execute tasks, fire "
+            "schedules and host channels. Settings come from syntasks.toml; flags "
+            "override them.",
         )
         add_config_args(parser)
         parser.add_argument(

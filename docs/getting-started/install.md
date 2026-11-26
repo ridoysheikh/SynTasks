@@ -10,7 +10,7 @@ pip install syntasks
 Until it's on PyPI, install a release from GitHub:
 
 ```bash
-pip install "syntasks @ https://github.com/ridoysheikh/syntasks/releases/download/v0.1.0/syntasks-0.1.0-py3-none-any.whl"
+pip install "syntasks @ https://github.com/ridoysheikh/syntasks/releases/download/v0.2.0/syntasks-0.2.0-py3-none-any.whl"
 ```
 
 ## Optional extras
@@ -19,7 +19,7 @@ pip install "syntasks @ https://github.com/ridoysheikh/syntasks/releases/downloa
 | --- | --- | --- |
 | `metrics` | prometheus_client | `PrometheusMiddleware` |
 | `opentelemetry` | OpenTelemetry API and instrumentation, psutil | traces and metrics ([Middlewares](../guides/middlewares.md)) |
-| `reload` | watchdog, gitignore-parser | `syntasks worker --reload` while developing |
+| `reload` | watchdog, gitignore-parser | `syntasks run --reload` while developing |
 | `orjson`, `msgpack`, `cbor` | the serializer | faster or smaller messages |
 | `uv` | uvloop | a faster event loop for workers |
 

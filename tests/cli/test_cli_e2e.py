@@ -8,6 +8,7 @@ import subprocess
 import sys
 import textwrap
 import time
+from importlib.metadata import entry_points
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,13 @@ def _project(tmp_path: Path, redis_url: str) -> Path:
     return tmp_path
 
 
+def test_run_is_the_command_that_starts_a_machine() -> None:
+    """One command runs everything on a machine; there is no `worker` command."""
+    commands = {entry.name for entry in entry_points().select(group="syntasks_cli")}
+    assert "run" in commands
+    assert "worker" not in commands
+
+
 def _cli(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # noqa: S603
         [sys.executable, "-m", "syntasks", *args],
@@ -73,7 +81,7 @@ def _cli(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-async def test_worker_and_management_commands(  # noqa: PLR0915
+async def test_run_and_management_commands(  # noqa: PLR0915
     tmp_path: Path,
     redis_url: str,
 ) -> None:
@@ -87,7 +95,7 @@ async def test_worker_and_management_commands(  # noqa: PLR0915
 
     env = {**os.environ, "PYTHONPATH": str(project)}
     worker = subprocess.Popen(
-        [sys.executable, "-m", "syntasks", "worker"],
+        [sys.executable, "-m", "syntasks", "run"],
         cwd=project,
         env=env,
         stdout=subprocess.PIPE,
@@ -205,7 +213,7 @@ def test_supervisor_stops_after_failed_startups(
         ),
     )
     started = time.monotonic()
-    result = _cli(tmp_path, "worker")
+    result = _cli(tmp_path, "run")
     assert result.returncode != 0
     output = result.stdout + result.stderr
     assert "database is unreachable" in output

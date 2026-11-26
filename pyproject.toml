@@ -43,7 +43,7 @@ syntasks = "syntasks.__main__:main"
 syntasks = "syntasks.instrumentation:SynTasksInstrumentor"
 
 [project.entry-points.syntasks_cli]
-worker = "syntasks.cli.worker:WorkerCMD"
+run = "syntasks.cli.run:RunCMD"
 config = "syntasks.cli.config_cmd:ConfigCMD"
 queues = "syntasks.cli.ops:QueuesCMD"
 schedules = "syntasks.cli.ops:SchedulesCMD"

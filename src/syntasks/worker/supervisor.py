@@ -1,5 +1,5 @@
 """
-``syntasks worker``: start and supervise worker processes.
+``syntasks run``: start and supervise worker processes.
 
 The supervisor (the process you start) only reads the config, starts
 ``worker.processes`` children and restarts them when they exit:
@@ -134,7 +134,7 @@ def load_app(config: Config, app_spec: str | None) -> "SynTasks":
             raise ConfigError(
                 detail="Cannot tell which SynTasks app to run "
                 f"({len(apps)} found). Set [app] app = 'module:attribute' "
-                "or pass it: syntasks worker module:attribute.",
+                "or pass it: syntasks run module:attribute.",
             )
         app = apps[0]
     import_from_modules(list(config.app.modules))

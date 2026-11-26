@@ -80,7 +80,7 @@ import syntasks
 assert syntasks.__version__ == '$PYV', syntasks.__version__
 assert syntasks.__file__.startswith('$smoke'), syntasks.__file__
 ") || die "the installed wheel does not import as version $PYV from the venv"
-(cd "$smoke" && venv/bin/syntasks --version >/dev/null && venv/bin/syntasks worker --help >/dev/null) \
+(cd "$smoke" && venv/bin/syntasks --version >/dev/null && venv/bin/syntasks run --help >/dev/null) \
   || die "the installed wheel's syntasks command fails"
 echo "ok: syntasks $PYV installs alone and runs"
 
